@@ -185,7 +185,7 @@ static void a10_pit_write(void *opaque, hwaddr offset, uint64_t value,
 static const MemoryRegionOps a10_pit_ops = {
     .read = a10_pit_read,
     .write = a10_pit_write,
-    .endianness = DEVICE_NATIVE_ENDIAN,
+    .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
 static const Property a10_pit_properties[] = {
@@ -288,7 +288,7 @@ static void a10_pit_finalize(Object *obj)
     }
 }
 
-static void a10_pit_class_init(ObjectClass *klass, void *data)
+static void a10_pit_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
 

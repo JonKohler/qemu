@@ -21,8 +21,7 @@
 #include "qemu/osdep.h"
 #include "cpu.h"
 #include "exec/helper-proto.h"
-#include "exec/exec-all.h"
-#include "exec/cpu_ldst.h"
+#include "accel/tcg/cpu-ldst.h"
 #include "softfloat.h"
 
 /*
@@ -455,7 +454,7 @@ void HELPER(ftst)(CPUM68KState *env, FPReg *val)
 
     if (floatx80_is_any_nan(val->d)) {
         cc |= FPSR_CC_A;
-    } else if (floatx80_is_infinity(val->d)) {
+    } else if (floatx80_is_infinity(val->d, &env->fp_status)) {
         cc |= FPSR_CC_I;
     } else if (floatx80_is_zero(val->d)) {
         cc |= FPSR_CC_Z;

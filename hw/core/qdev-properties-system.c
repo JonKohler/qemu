@@ -27,7 +27,7 @@
 #include "qemu/error-report.h"
 #include "qdev-prop-internal.h"
 
-#include "audio/audio.h"
+#include "qemu/audio.h"
 #include "chardev/char-fe.h"
 #include "system/block-backend.h"
 #include "system/blockdev.h"
@@ -145,6 +145,7 @@ static void set_drive_helper(Object *obj, Visitor *v, const char *name,
         if (ctx != bdrv_get_aio_context(bs)) {
             error_setg(errp, "Different aio context is not supported for new "
                        "node");
+            return;
         }
 
         blk_replace_bs(blk, bs, errp);
@@ -235,7 +236,7 @@ static void release_drive(Object *obj, const char *name, void *opaque)
 }
 
 const PropertyInfo qdev_prop_drive = {
-    .name  = "str",
+    .type  = "str",
     .description = "Node name or ID of a block device to use as a backend",
     .realized_set_allowed = true,
     .get   = get_drive,
@@ -244,7 +245,7 @@ const PropertyInfo qdev_prop_drive = {
 };
 
 const PropertyInfo qdev_prop_drive_iothread = {
-    .name  = "str",
+    .type  = "str",
     .description = "Node name or ID of a block device to use as a backend",
     .realized_set_allowed = true,
     .get   = get_drive,
@@ -257,10 +258,10 @@ const PropertyInfo qdev_prop_drive_iothread = {
 static void get_chr(Object *obj, Visitor *v, const char *name, void *opaque,
                     Error **errp)
 {
-    CharBackend *be = object_field_prop_ptr(obj, opaque);
+    CharFrontend *fe = object_field_prop_ptr(obj, opaque);
     char *p;
 
-    p = g_strdup(be->chr && be->chr->label ? be->chr->label : "");
+    p = g_strdup(fe->chr && fe->chr->label ? fe->chr->label : "");
     visit_type_str(v, name, &p, errp);
     g_free(p);
 }
@@ -270,7 +271,7 @@ static void set_chr(Object *obj, Visitor *v, const char *name, void *opaque,
 {
     ERRP_GUARD();
     const Property *prop = opaque;
-    CharBackend *be = object_field_prop_ptr(obj, prop);
+    CharFrontend *fe = object_field_prop_ptr(obj, prop);
     Chardev *s;
     char *str;
 
@@ -282,13 +283,13 @@ static void set_chr(Object *obj, Visitor *v, const char *name, void *opaque,
      * TODO Should this really be an error?  If no, the old value
      * needs to be released before we store the new one.
      */
-    if (!check_prop_still_unset(obj, name, be->chr, str, false, errp)) {
+    if (!check_prop_still_unset(obj, name, fe->chr, str, false, errp)) {
         return;
     }
 
     if (!*str) {
         g_free(str);
-        be->chr = NULL;
+        fe->chr = NULL;
         return;
     }
 
@@ -296,7 +297,7 @@ static void set_chr(Object *obj, Visitor *v, const char *name, void *opaque,
     if (s == NULL) {
         error_setg(errp, "Property '%s.%s' can't find value '%s'",
                    object_get_typename(obj), name, str);
-    } else if (!qemu_chr_fe_init(be, s, errp)) {
+    } else if (!qemu_chr_fe_init(fe, s, errp)) {
         error_prepend(errp, "Property '%s.%s' can't take value '%s': ",
                       object_get_typename(obj), name, str);
     }
@@ -306,13 +307,13 @@ static void set_chr(Object *obj, Visitor *v, const char *name, void *opaque,
 static void release_chr(Object *obj, const char *name, void *opaque)
 {
     const Property *prop = opaque;
-    CharBackend *be = object_field_prop_ptr(obj, prop);
+    CharFrontend *fe = object_field_prop_ptr(obj, prop);
 
-    qemu_chr_fe_deinit(be, false);
+    qemu_chr_fe_deinit(fe, false);
 }
 
 const PropertyInfo qdev_prop_chr = {
-    .name  = "str",
+    .type  = "str",
     .description = "ID of a chardev to use as a backend",
     .get   = get_chr,
     .set   = set_chr,
@@ -386,7 +387,7 @@ inval:
 }
 
 const PropertyInfo qdev_prop_macaddr = {
-    .name  = "str",
+    .type  = "str",
     .description = "Ethernet 6-byte MAC Address, example: 52:54:00:12:34:56",
     .get   = get_mac,
     .set   = set_mac,
@@ -474,7 +475,7 @@ out:
 }
 
 const PropertyInfo qdev_prop_netdev = {
-    .name  = "str",
+    .type  = "str",
     .description = "ID of a netdev to use as a backend",
     .get   = get_netdev,
     .set   = set_netdev,
@@ -486,33 +487,32 @@ static void get_audiodev(Object *obj, Visitor *v, const char* name,
                          void *opaque, Error **errp)
 {
     const Property *prop = opaque;
-    QEMUSoundCard *card = object_field_prop_ptr(obj, prop);
-    char *p = g_strdup(audio_get_id(card));
+    AudioBackend **be = object_field_prop_ptr(obj, prop);
+    g_autofree char *id = g_strdup(audio_be_get_id(*be));
 
-    visit_type_str(v, name, &p, errp);
-    g_free(p);
+    visit_type_str(v, name, (char **)&id, errp);
 }
 
 static void set_audiodev(Object *obj, Visitor *v, const char* name,
                          void *opaque, Error **errp)
 {
     const Property *prop = opaque;
-    QEMUSoundCard *card = object_field_prop_ptr(obj, prop);
-    AudioState *state;
+    AudioBackend **be = object_field_prop_ptr(obj, prop);
+    AudioBackend *state;
     g_autofree char *str = NULL;
 
     if (!visit_type_str(v, name, &str, errp)) {
         return;
     }
 
-    state = audio_state_by_name(str, errp);
+    state = audio_be_by_name(str, errp);
     if (state) {
-        card->state = state;
+        *be = state;
     }
 }
 
 const PropertyInfo qdev_prop_audiodev = {
-    .name = "str",
+    .type = "str",
     .description = "ID of an audiodev to use as a backend",
     /* release done on shutdown */
     .get = get_audiodev,
@@ -602,7 +602,8 @@ static void qdev_propinfo_set_losttickpolicy(Object *obj, Visitor *v,
 QEMU_BUILD_BUG_ON(sizeof(LostTickPolicy) != sizeof(int));
 
 const PropertyInfo qdev_prop_losttickpolicy = {
-    .name  = "LostTickPolicy",
+    .type  = "LostTickPolicy",
+    .description = "Policy for handling lost ticks (discard/delay/slew)",
     .enum_table  = &LostTickPolicy_lookup,
     .get   = qdev_propinfo_get_enum,
     .set   = qdev_propinfo_set_losttickpolicy,
@@ -628,7 +629,7 @@ static void set_blocksize(Object *obj, Visitor *v, const char *name,
 }
 
 const PropertyInfo qdev_prop_blocksize = {
-    .name  = "size",
+    .type  = "size",
     .description = "A power of two between " MIN_BLOCK_SIZE_STR
                    " and " MAX_BLOCK_SIZE_STR,
     .get   = qdev_propinfo_get_size32,
@@ -641,9 +642,8 @@ const PropertyInfo qdev_prop_blocksize = {
 QEMU_BUILD_BUG_ON(sizeof(BlockdevOnError) != sizeof(int));
 
 const PropertyInfo qdev_prop_blockdev_on_error = {
-    .name = "BlockdevOnError",
-    .description = "Error handling policy, "
-                   "report/ignore/enospc/stop/auto",
+    .type = "BlockdevOnError",
+    .description = "Error handling policy (report/ignore/enospc/stop/auto)",
     .enum_table = &BlockdevOnError_lookup,
     .get = qdev_propinfo_get_enum,
     .set = qdev_propinfo_set_enum,
@@ -655,9 +655,9 @@ const PropertyInfo qdev_prop_blockdev_on_error = {
 QEMU_BUILD_BUG_ON(sizeof(BiosAtaTranslation) != sizeof(int));
 
 const PropertyInfo qdev_prop_bios_chs_trans = {
-    .name = "BiosAtaTranslation",
-    .description = "Logical CHS translation algorithm, "
-                   "auto/none/lba/large/rechs",
+    .type = "BiosAtaTranslation",
+    .description = "Logical CHS translation algorithm "
+                   " (auto/none/lba/large/rechs)",
     .enum_table = &BiosAtaTranslation_lookup,
     .get = qdev_propinfo_get_enum,
     .set = qdev_propinfo_set_enum,
@@ -667,9 +667,8 @@ const PropertyInfo qdev_prop_bios_chs_trans = {
 /* --- FDC default drive types */
 
 const PropertyInfo qdev_prop_fdc_drive_type = {
-    .name = "FdcDriveType",
-    .description = "FDC drive type, "
-                   "144/288/120/none/auto",
+    .type = "FloppyDriveType",
+    .description = "Floppy drive type (144/288/120/none/auto)",
     .enum_table = &FloppyDriveType_lookup,
     .get = qdev_propinfo_get_enum,
     .set = qdev_propinfo_set_enum,
@@ -679,9 +678,9 @@ const PropertyInfo qdev_prop_fdc_drive_type = {
 /* --- MultiFDCompression --- */
 
 const PropertyInfo qdev_prop_multifd_compression = {
-    .name = "MultiFDCompression",
-    .description = "multifd_compression values, "
-                   "none/zlib/zstd/qpl/uadk/qatzip",
+    .type = "MultiFDCompression",
+    .description = "multifd_compression values"
+                   " (none/zlib/zstd/qpl/uadk/qatzip)",
     .enum_table = &MultiFDCompression_lookup,
     .get = qdev_propinfo_get_enum,
     .set = qdev_propinfo_set_enum,
@@ -693,9 +692,8 @@ const PropertyInfo qdev_prop_multifd_compression = {
 QEMU_BUILD_BUG_ON(sizeof(MigMode) != sizeof(int));
 
 const PropertyInfo qdev_prop_mig_mode = {
-    .name = "MigMode",
-    .description = "mig_mode values, "
-                   "normal,cpr-reboot",
+    .type = "MigMode",
+    .description = "Migration mode (normal/cpr-reboot)",
     .enum_table = &MigMode_lookup,
     .get = qdev_propinfo_get_enum,
     .set = qdev_propinfo_set_enum,
@@ -707,9 +705,8 @@ const PropertyInfo qdev_prop_mig_mode = {
 QEMU_BUILD_BUG_ON(sizeof(GranuleMode) != sizeof(int));
 
 const PropertyInfo qdev_prop_granule_mode = {
-    .name = "GranuleMode",
-    .description = "granule_mode values, "
-                   "4k, 8k, 16k, 64k, host",
+    .type = "GranuleMode",
+    .description = "Granule page size (4k/8k/16k/64k/host)",
     .enum_table = &GranuleMode_lookup,
     .get = qdev_propinfo_get_enum,
     .set = qdev_propinfo_set_enum,
@@ -717,9 +714,8 @@ const PropertyInfo qdev_prop_granule_mode = {
 };
 
 const PropertyInfo qdev_prop_zero_page_detection = {
-    .name = "ZeroPageDetection",
-    .description = "zero_page_detection values, "
-                   "none,legacy,multifd",
+    .type = "ZeroPageDetection",
+    .description = "Zero page detection (none/legacy/multifd)",
     .enum_table = &ZeroPageDetection_lookup,
     .get = qdev_propinfo_get_enum,
     .set = qdev_propinfo_set_enum,
@@ -797,11 +793,10 @@ separator_error:
     error_setg(errp, "reserved region fields must be separated with ':'");
 out:
     g_free(str);
-    return;
 }
 
 const PropertyInfo qdev_prop_reserved_region = {
-    .name  = "reserved_region",
+    .type  = "str",
     .description = "Reserved Region, example: 0xFEE00000:0xFEEFFFFF:0",
     .get   = get_reserved_region,
     .set   = set_reserved_region,
@@ -869,20 +864,19 @@ out:
     visit_end_alternate(v, (void **) &alt);
 }
 
-static int print_pci_devfn(Object *obj, const Property *prop, char *dest,
-                           size_t len)
+static char *print_pci_devfn(Object *obj, const Property *prop)
 {
     int32_t *ptr = object_field_prop_ptr(obj, prop);
 
     if (*ptr == -1) {
-        return snprintf(dest, len, "<unset>");
+        return g_strdup("<unset>");
     } else {
-        return snprintf(dest, len, "%02x.%x", *ptr >> 3, *ptr & 7);
+        return g_strdup_printf("%02x.%x", *ptr >> 3, *ptr & 7);
     }
 }
 
 const PropertyInfo qdev_prop_pci_devfn = {
-    .name  = "int32",
+    .type  = "str",
     .description = "Slot and optional function number, example: 06.0 or 06",
     .print = print_pci_devfn,
     .get   = qdev_propinfo_get_int32,
@@ -988,8 +982,8 @@ inval:
 }
 
 const PropertyInfo qdev_prop_pci_host_devaddr = {
-    .name = "str",
-    .description = "Address (bus/device/function) of "
+    .type = "str",
+    .description = "Address (bus:device.function) of "
                    "the host device, example: 04:10.0",
     .get = get_pci_host_devaddr,
     .set = set_pci_host_devaddr,
@@ -998,7 +992,7 @@ const PropertyInfo qdev_prop_pci_host_devaddr = {
 /* --- OffAutoPCIBAR off/auto/bar0/bar1/bar2/bar3/bar4/bar5 --- */
 
 const PropertyInfo qdev_prop_off_auto_pcibar = {
-    .name = "OffAutoPCIBAR",
+    .type = "OffAutoPCIBAR",
     .description = "off/auto/bar0/bar1/bar2/bar3/bar4/bar5",
     .enum_table = &OffAutoPCIBAR_lookup,
     .get = qdev_propinfo_get_enum,
@@ -1080,7 +1074,7 @@ static void set_prop_pcielinkspeed(Object *obj, Visitor *v, const char *name,
 }
 
 const PropertyInfo qdev_prop_pcie_link_speed = {
-    .name = "PCIELinkSpeed",
+    .type = "PCIELinkSpeed",
     .description = "2_5/5/8/16/32/64",
     .enum_table = &PCIELinkSpeed_lookup,
     .get = get_prop_pcielinkspeed,
@@ -1168,7 +1162,7 @@ static void set_prop_pcielinkwidth(Object *obj, Visitor *v, const char *name,
 }
 
 const PropertyInfo qdev_prop_pcie_link_width = {
-    .name = "PCIELinkWidth",
+    .type = "PCIELinkWidth",
     .description = "1/2/4/8/12/16/32",
     .enum_table = &PCIELinkWidth_lookup,
     .get = get_prop_pcielinkwidth,
@@ -1218,7 +1212,7 @@ static void set_default_uuid_auto(ObjectProperty *op, const Property *prop)
 }
 
 const PropertyInfo qdev_prop_uuid = {
-    .name  = "str",
+    .type  = "str",
     .description = "UUID (aka GUID) or \"" UUID_VALUE_AUTO
         "\" for random value (default)",
     .get   = get_uuid,
@@ -1231,8 +1225,8 @@ const PropertyInfo qdev_prop_uuid = {
 QEMU_BUILD_BUG_ON(sizeof(S390CpuEntitlement) != sizeof(int));
 
 const PropertyInfo qdev_prop_cpus390entitlement = {
-    .name  = "S390CpuEntitlement",
-    .description = "low/medium (default)/high",
+    .type  = "S390CpuEntitlement",
+    .description = "auto/low/medium/high (default medium)",
     .enum_table  = &S390CpuEntitlement_lookup,
     .get   = qdev_propinfo_get_enum,
     .set   = qdev_propinfo_set_enum,
@@ -1276,10 +1270,74 @@ static void release_iothread_vq_mapping_list(Object *obj,
 }
 
 const PropertyInfo qdev_prop_iothread_vq_mapping_list = {
-    .name = "IOThreadVirtQueueMappingList",
+    .type = "IOThreadVirtQueueMappingList",
     .description = "IOThread virtqueue mapping list [{\"iothread\":\"<id>\", "
                    "\"vqs\":[1,2,3,...]},...]",
     .get = get_iothread_vq_mapping_list,
     .set = set_iothread_vq_mapping_list,
     .release = release_iothread_vq_mapping_list,
+};
+
+/* --- Endian modes */
+
+const PropertyInfo qdev_prop_endian_mode = {
+    .type = "EndianMode",
+    .description = "Endian mode, big/little/unspecified",
+    .enum_table = &EndianMode_lookup,
+    .get = qdev_propinfo_get_enum,
+    .set = qdev_propinfo_set_enum,
+    .set_default_value = qdev_propinfo_set_default_value_enum,
+};
+
+const PropertyInfo qdev_prop_vmapple_virtio_blk_variant = {
+    .type  = "VMAppleVirtioBlkVariant",
+    .description = "unspecified/root/aux",
+    .enum_table  = &VMAppleVirtioBlkVariant_lookup,
+    .get   = qdev_propinfo_get_enum,
+    .set   = qdev_propinfo_set_enum,
+    .set_default_value = qdev_propinfo_set_default_value_enum,
+};
+
+/* --- VirtIOGPUOutputList --- */
+
+static void get_virtio_gpu_output_list(Object *obj, Visitor *v,
+    const char *name, void *opaque, Error **errp)
+{
+    VirtIOGPUOutputList **prop_ptr =
+        object_field_prop_ptr(obj, opaque);
+
+    visit_type_VirtIOGPUOutputList(v, name, prop_ptr, errp);
+}
+
+static void set_virtio_gpu_output_list(Object *obj, Visitor *v,
+    const char *name, void *opaque, Error **errp)
+{
+    VirtIOGPUOutputList **prop_ptr =
+        object_field_prop_ptr(obj, opaque);
+    VirtIOGPUOutputList *list;
+
+    if (!visit_type_VirtIOGPUOutputList(v, name, &list, errp)) {
+        return;
+    }
+
+    qapi_free_VirtIOGPUOutputList(*prop_ptr);
+    *prop_ptr = list;
+}
+
+static void release_virtio_gpu_output_list(Object *obj,
+    const char *name, void *opaque)
+{
+    VirtIOGPUOutputList **prop_ptr =
+        object_field_prop_ptr(obj, opaque);
+
+    qapi_free_VirtIOGPUOutputList(*prop_ptr);
+    *prop_ptr = NULL;
+}
+
+const PropertyInfo qdev_prop_virtio_gpu_output_list = {
+    .type = "VirtIOGPUOutputList",
+    .description = "VirtIO GPU output list [{\"name\":\"<name>\"},...]",
+    .get = get_virtio_gpu_output_list,
+    .set = set_virtio_gpu_output_list,
+    .release = release_virtio_gpu_output_list,
 };

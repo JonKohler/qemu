@@ -11,11 +11,13 @@
  */
 
 #include "qemu/osdep.h"
-#include "exec/ramblock.h"
+#include "system/ramblock.h"
 #include "exec/target_page.h"
 #include "file.h"
+#include "migration-stats.h"
 #include "multifd.h"
 #include "options.h"
+#include "migration.h"
 #include "qapi/error.h"
 #include "qemu/cutils.h"
 #include "qemu/error-report.h"
@@ -24,15 +26,14 @@
 
 static MultiFDSendData *multifd_ram_send;
 
-size_t multifd_ram_payload_size(void)
+void multifd_ram_payload_alloc(MultiFDPages_t *pages)
 {
-    uint32_t n = multifd_ram_page_count();
+    pages->offset = g_new0(ram_addr_t, multifd_ram_page_count());
+}
 
-    /*
-     * We keep an array of page offsets at the end of MultiFDPages_t,
-     * add space for it in the allocation.
-     */
-    return sizeof(MultiFDPages_t) + n * sizeof(ram_addr_t);
+void multifd_ram_payload_free(MultiFDPages_t *pages)
+{
+    g_clear_pointer(&pages->offset, g_free);
 }
 
 void multifd_ram_save_setup(void)
@@ -42,8 +43,7 @@ void multifd_ram_save_setup(void)
 
 void multifd_ram_save_cleanup(void)
 {
-    g_free(multifd_ram_send);
-    multifd_ram_send = NULL;
+    g_clear_pointer(&multifd_ram_send, multifd_send_data_free);
 }
 
 static void multifd_set_file_bitmap(MultiFDSendParams *p)
@@ -83,7 +83,13 @@ static void multifd_nocomp_send_cleanup(MultiFDSendParams *p, Error **errp)
 {
     g_free(p->iov);
     p->iov = NULL;
-    return;
+}
+
+static void multifd_ram_prepare_header(MultiFDSendParams *p)
+{
+    p->iov[0].iov_len = p->packet_len;
+    p->iov[0].iov_base = p->packet;
+    p->iovs_num++;
 }
 
 static void multifd_send_prepare_iovs(MultiFDSendParams *p)
@@ -119,7 +125,7 @@ static int multifd_nocomp_send_prepare(MultiFDSendParams *p, Error **errp)
          * Only !zerocopy needs the header in IOV; zerocopy will
          * send it separately.
          */
-        multifd_send_prepare_header(p);
+        multifd_ram_prepare_header(p);
     }
 
     multifd_send_prepare_iovs(p);
@@ -134,6 +140,8 @@ static int multifd_nocomp_send_prepare(MultiFDSendParams *p, Error **errp)
         if (ret != 0) {
             return -1;
         }
+
+        stat64_add(&mig_stats.multifd_bytes, p->packet_len);
     }
 
     return 0;
@@ -391,7 +399,7 @@ int multifd_ram_flush_and_sync(QEMUFile *f)
     MultiFDSyncReq req;
     int ret;
 
-    if (!migrate_multifd()) {
+    if (!migrate_multifd() || migration_in_postcopy()) {
         return 0;
     }
 
@@ -432,7 +440,7 @@ int multifd_ram_flush_and_sync(QEMUFile *f)
 bool multifd_send_prepare_common(MultiFDSendParams *p)
 {
     MultiFDPages_t *pages = &p->data->u.ram;
-    multifd_send_prepare_header(p);
+    multifd_ram_prepare_header(p);
     multifd_send_zero_page_detect(p);
 
     if (!pages->normal_num) {

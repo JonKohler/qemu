@@ -21,10 +21,10 @@
 #include "cpu.h"
 #include "qapi/error.h"
 #include "qapi/qapi-visit-run-state.h"
-#include "qapi/qmp/qdict.h"
+#include "qobject/qdict.h"
 #include "qapi/qobject-input-visitor.h"
 #include "qom/qom-qobject.h"
-#include "qapi/qapi-commands-machine-target.h"
+#include "qapi/qapi-commands-machine.h"
 
 #include "cpu-internal.h"
 

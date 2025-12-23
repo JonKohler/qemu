@@ -26,19 +26,22 @@
 #include "qemu/help-texts.h"
 #include "qemu/datadir.h"
 #include "qemu/units.h"
+#include "qemu/module.h"
+#include "qemu/target-info.h"
 #include "exec/cpu-common.h"
 #include "exec/page-vary.h"
 #include "hw/qdev-properties.h"
 #include "qapi/compat-policy.h"
 #include "qapi/error.h"
-#include "qapi/qmp/qdict.h"
-#include "qapi/qmp/qstring.h"
-#include "qapi/qmp/qjson.h"
+#include "qobject/qdict.h"
+#include "qobject/qstring.h"
+#include "qobject/qjson.h"
 #include "qemu-version.h"
 #include "qemu/cutils.h"
 #include "qemu/help_option.h"
 #include "qemu/hw-version.h"
 #include "qemu/uuid.h"
+#include "qemu/target-info.h"
 #include "system/reset.h"
 #include "system/runstate.h"
 #include "system/runstate-action.h"
@@ -50,9 +53,11 @@
 #include "qemu/sockets.h"
 #include "qemu/accel.h"
 #include "qemu/async-teardown.h"
+#include "qemu/exit-with-parent.h"
 #include "hw/usb.h"
 #include "hw/isa/isa.h"
 #include "hw/scsi/scsi.h"
+#include "hw/sd/sd.h"
 #include "hw/display/vga.h"
 #include "hw/firmware/smbios.h"
 #include "hw/acpi/acpi.h"
@@ -82,10 +87,11 @@
 #include "migration/snapshot.h"
 #include "system/tpm.h"
 #include "system/dma.h"
-#include "hw/audio/soundhw.h"
-#include "audio/audio.h"
+#include "hw/audio/model.h"
+#include "qemu/audio.h"
 #include "system/cpus.h"
 #include "system/cpu-timers.h"
+#include "exec/icount.h"
 #include "migration/colo.h"
 #include "migration/postcopy-ram.h"
 #include "system/kvm.h"
@@ -194,7 +200,7 @@ static int default_parallel = 1;
 static int default_monitor = 1;
 static int default_floppy = 1;
 static int default_cdrom = 1;
-static int default_sdcard = 1;
+static bool auto_create_sdcard = true;
 static int default_vga = 1;
 static int default_net = 1;
 
@@ -351,7 +357,7 @@ static QemuOptsList qemu_overcommit_opts = {
     .desc = {
         {
             .name = "mem-lock",
-            .type = QEMU_OPT_BOOL,
+            .type = QEMU_OPT_STRING,
         },
         {
             .name = "cpu-pm",
@@ -718,7 +724,7 @@ static void configure_blockdev(BlockdevOptionsQueue *bdo_queue,
     default_drive(default_cdrom, snapshot, machine_class->block_default_type, 2,
                   CDROM_OPTS);
     default_drive(default_floppy, snapshot, IF_FLOPPY, 0, FD_OPTS);
-    default_drive(default_sdcard, snapshot, IF_SD, 0, SD_OPTS);
+    default_drive(auto_create_sdcard, snapshot, IF_SD, 0, SD_OPTS);
 
 }
 
@@ -763,7 +769,7 @@ static QemuOptsList qemu_smp_opts = {
     },
 };
 
-#if defined(CONFIG_POSIX)
+#if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
 static QemuOptsList qemu_run_with_opts = {
     .name = "run-with",
     .head = QTAILQ_HEAD_INITIALIZER(qemu_run_with_opts.head),
@@ -777,6 +783,10 @@ static QemuOptsList qemu_run_with_opts = {
         {
             .name = "chroot",
             .type = QEMU_OPT_STRING,
+        },
+        {
+            .name = "exit-with-parent",
+            .type = QEMU_OPT_BOOL,
         },
         {
             .name = "user",
@@ -796,8 +806,8 @@ static QemuOptsList qemu_run_with_opts = {
 
 static void realtime_init(void)
 {
-    if (enable_mlock) {
-        if (os_mlock() < 0) {
+    if (should_mlock(mlock_state)) {
+        if (os_mlock(is_mlock_on_fault(mlock_state)) < 0) {
             error_report("locking memory failed");
             exit(1);
         }
@@ -875,11 +885,11 @@ static void help(int exitcode)
             g_get_prgname());
 
 #define DEF(option, opt_arg, opt_enum, opt_help, arch_mask)    \
-    if ((arch_mask) & arch_type)                               \
+    if (qemu_arch_available(arch_mask)) \
         fputs(opt_help, stdout);
 
 #define ARCHHEADING(text, arch_mask) \
-    if ((arch_mask) & arch_type)    \
+    if (qemu_arch_available(arch_mask)) \
         puts(stringify(text));
 
 #define DEFHEADING(text) ARCHHEADING(text, QEMU_ARCH_ALL)
@@ -1187,10 +1197,7 @@ static int parse_fw_cfg(void *opaque, QemuOpts *opts, Error **errp)
             return -1;
         }
     }
-    /* For legacy, keep user files in a specific global order. */
-    fw_cfg_set_order_override(fw_cfg, FW_CFG_ORDER_OVERRIDE_USER);
     fw_cfg_add_file(fw_cfg, name, buf, size);
-    fw_cfg_reset_order_override(fw_cfg);
     return 0;
 }
 
@@ -1346,8 +1353,8 @@ static void qemu_disable_default_devices(void)
     if (!has_defaults || machine_class->no_cdrom) {
         default_cdrom = 0;
     }
-    if (!has_defaults || machine_class->no_sdcard) {
-        default_sdcard = 0;
+    if (!has_defaults || !machine_class->auto_create_sdcard) {
+        auto_create_sdcard = false;
     }
     if (!has_defaults) {
         default_audio = 0;
@@ -1520,7 +1527,7 @@ static bool debugcon_parse(const char *devname, Error **errp)
     return true;
 }
 
-static gint machine_class_cmp(gconstpointer a, gconstpointer b)
+static gint machine_class_cmp(gconstpointer a, gconstpointer b, gpointer d)
 {
     const MachineClass *mc1 = a, *mc2 = b;
     int res;
@@ -1560,7 +1567,7 @@ static void machine_help_func(const QDict *qdict)
     GSList *el;
     const char *type = qdict_get_try_str(qdict, "type");
 
-    machines = object_class_get_list(TYPE_MACHINE, false);
+    machines = object_class_get_list(target_machine_typename(), false);
     if (type) {
         ObjectClass *machine_class = OBJECT_CLASS(find_machine(type, machines));
         if (machine_class) {
@@ -1570,7 +1577,7 @@ static void machine_help_func(const QDict *qdict)
     }
 
     printf("Supported machines are:\n");
-    machines = g_slist_sort(machines, machine_class_cmp);
+    machines = g_slist_sort_with_data(machines, machine_class_cmp, NULL);
     for (el = machines; el; el = el->next) {
         MachineClass *mc = el->data;
         if (mc->alias) {
@@ -1670,7 +1677,8 @@ static MachineClass *select_machine(QDict *qdict, Error **errp)
 {
     ERRP_GUARD();
     const char *machine_type = qdict_get_try_str(qdict, "type");
-    g_autoptr(GSList) machines = object_class_get_list(TYPE_MACHINE, false);
+    g_autoptr(GSList) machines = object_class_get_list(target_machine_typename(),
+                                                       false);
     MachineClass *machine_class = NULL;
 
     if (machine_type) {
@@ -1873,6 +1881,44 @@ static void object_option_parse(const char *str)
 
     object_option_add_visitor(v);
     visit_free(v);
+}
+
+static void overcommit_parse(const char *str)
+{
+    QemuOpts *opts;
+    const char *mem_lock_opt;
+
+    opts = qemu_opts_parse_noisily(qemu_find_opts("overcommit"),
+                                   str, false);
+    if (!opts) {
+        exit(1);
+    }
+
+    enable_cpu_pm = qemu_opt_get_bool(opts, "cpu-pm", enable_cpu_pm);
+
+    mem_lock_opt = qemu_opt_get(opts, "mem-lock");
+    if (!mem_lock_opt) {
+        return;
+    }
+
+    if (strcmp(mem_lock_opt, "on") == 0) {
+        mlock_state = MLOCK_ON;
+        return;
+    }
+
+    if (strcmp(mem_lock_opt, "off") == 0) {
+        mlock_state = MLOCK_OFF;
+        return;
+    }
+
+    if (strcmp(mem_lock_opt, "on-fault") == 0) {
+        mlock_state = MLOCK_ON_FAULT;
+        return;
+    }
+
+    error_report("parameter 'mem-lock' expects one of "
+                 "'on', 'off', 'on-fault'");
+    exit(1);
 }
 
 /*
@@ -2224,7 +2270,7 @@ static void qemu_record_config_group(const char *group, QDict *dict,
         Audiodev *dev = NULL;
         Visitor *v = qobject_input_visitor_new_keyval(QOBJECT(dict));
         if (visit_type_Audiodev(v, NULL, &dev, errp)) {
-            audio_define(dev);
+            audio_add_audiodev(dev);
         }
         visit_free(v);
 
@@ -2661,11 +2707,26 @@ static void qemu_init_displays(void)
 
 static void qemu_init_board(void)
 {
+    MachineClass *machine_class = MACHINE_GET_CLASS(current_machine);
+
     /* process plugin before CPUs are created, but once -smp has been parsed */
     qemu_plugin_load_list(&plugin_list, &error_fatal);
 
     /* From here on we enter MACHINE_PHASE_INITIALIZED.  */
     machine_run_board_init(current_machine, mem_path, &error_fatal);
+
+    if (machine_class->auto_create_sdcard) {
+        bool ambigous;
+
+        /* Ensure there is a SD bus available to create SD card on */
+        Object *obj = object_resolve_path_type("", TYPE_SD_BUS, &ambigous);
+        if (!obj && !ambigous) {
+            fprintf(stderr, "Can not create sd-card on '%s' machine"
+                            " because it lacks a sd-bus\n",
+                            machine_class->name);
+            abort();
+        }
+    }
 
     drive_check_orphaned();
 
@@ -2676,7 +2737,7 @@ static void qemu_create_cli_devices(void)
 {
     DeviceOption *opt;
 
-    soundhw_init();
+    audio_model_init();
 
     qemu_opts_foreach(qemu_find_opts("fw_cfg"),
                       parse_fw_cfg, fw_cfg_find(), &error_fatal);
@@ -2687,7 +2748,6 @@ static void qemu_create_cli_devices(void)
     }
 
     /* init generic devices */
-    rom_set_order_override(FW_CFG_ORDER_OVERRIDE_DEVICE);
     qemu_opts_foreach(qemu_find_opts("device"),
                       device_init_func, NULL, &error_fatal);
     QTAILQ_FOREACH(opt, &device_opts, next) {
@@ -2698,7 +2758,6 @@ static void qemu_create_cli_devices(void)
         assert(ret_data == NULL); /* error_fatal aborts */
         loc_pop(&opt->loc);
     }
-    rom_reset_order_override();
 }
 
 static bool qemu_machine_creation_done(Error **errp)
@@ -2831,7 +2890,10 @@ void qemu_init(int argc, char **argv)
 
     os_setup_limits();
 
-    qemu_init_arch_modules();
+#ifdef CONFIG_MODULES
+    module_init_info(qemu_modinfo);
+    module_allow_arch(target_name());
+#endif
 
     qemu_init_subsystems();
 
@@ -2870,7 +2932,7 @@ void qemu_init(int argc, char **argv)
             const QEMUOption *popt;
 
             popt = lookup_opt(argc, argv, &optarg, &optind);
-            if (!(popt->arch_mask & arch_type)) {
+            if (!qemu_arch_available(popt->arch_mask)) {
                 error_report("Option not supported for this target");
                 exit(1);
             }
@@ -3021,7 +3083,7 @@ void qemu_init(int argc, char **argv)
                     model = g_strdup(qdict_get_str(dict, "model"));
                     qdict_del(dict, "model");
                     if (is_help_option(model)) {
-                        show_valid_soundhw();
+                        audio_print_available_models();
                         exit(0);
                     }
                 }
@@ -3030,11 +3092,11 @@ void qemu_init(int argc, char **argv)
                 visit_type_Audiodev(v, NULL, &dev, &error_fatal);
                 visit_free(v);
                 if (model) {
-                    audio_define(dev);
-                    select_soundhw(model, dev->id);
+                    audio_add_audiodev(dev);
+                    audio_set_model(model, dev->id);
                     g_free(model);
                 } else {
-                    audio_define_default(dev, &error_fatal);
+                    audio_add_default_audiodev(dev, &error_fatal);
                 }
                 break;
             }
@@ -3468,9 +3530,6 @@ void qemu_init(int argc, char **argv)
                 prom_envs[nb_prom_envs] = optarg;
                 nb_prom_envs++;
                 break;
-            case QEMU_OPTION_old_param:
-                old_param = 1;
-                break;
             case QEMU_OPTION_rtc:
                 opts = qemu_opts_parse_noisily(qemu_find_opts("rtc"), optarg,
                                                false);
@@ -3574,13 +3633,7 @@ void qemu_init(int argc, char **argv)
                 object_option_parse(optarg);
                 break;
             case QEMU_OPTION_overcommit:
-                opts = qemu_opts_parse_noisily(qemu_find_opts("overcommit"),
-                                               optarg, false);
-                if (!opts) {
-                    exit(1);
-                }
-                enable_mlock = qemu_opt_get_bool(opts, "mem-lock", enable_mlock);
-                enable_cpu_pm = qemu_opt_get_bool(opts, "cpu-pm", enable_cpu_pm);
+                overcommit_parse(optarg);
                 break;
             case QEMU_OPTION_compat:
                 {
@@ -3623,7 +3676,7 @@ void qemu_init(int argc, char **argv)
             case QEMU_OPTION_nouserconfig:
                 /* Nothing to be parsed here. Especially, do not error out below. */
                 break;
-#if defined(CONFIG_POSIX)
+#if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
             case QEMU_OPTION_daemonize:
                 os_set_daemonize(true);
                 break;
@@ -3642,6 +3695,14 @@ void qemu_init(int argc, char **argv)
                 str = qemu_opt_get(opts, "chroot");
                 if (str) {
                     os_set_chroot(str);
+                }
+                if (qemu_opt_get_bool(opts, "exit-with-parent", false)) {
+                    if (!can_exit_with_parent()) {
+                        error_report("exit-with-parent is not available"
+                                     " on this platform");
+                        exit(1);
+                    }
+                    set_exit_with_parent();
                 }
                 str = qemu_opt_get(opts, "user");
                 if (str) {
@@ -3769,7 +3830,7 @@ void qemu_init(int argc, char **argv)
     migration_object_init();
 
     /* parse features once if machine provides default cpu_type */
-    current_machine->cpu_type = machine_class_default_cpu_type(machine_class);
+    current_machine->cpu_type = machine_default_cpu_type(current_machine);
     if (cpu_option) {
         current_machine->cpu_type = parse_cpu_option(cpu_option);
     }
@@ -3790,6 +3851,8 @@ void qemu_init(int argc, char **argv)
     }
     qemu_init_displays();
     accel_setup_post(current_machine);
-    os_setup_post();
+    if (migrate_mode() != MIG_MODE_CPR_EXEC) {
+        os_setup_post();
+    }
     resume_mux_open();
 }

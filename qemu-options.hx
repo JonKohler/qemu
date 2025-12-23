@@ -28,7 +28,7 @@ DEF("machine", HAS_ARG, QEMU_OPTION_machine, \
     "-machine [type=]name[,prop[=value][,...]]\n"
     "                selects emulated machine ('-machine help' for list)\n"
     "                property accel=accel1[:accel2[:...]] selects accelerator\n"
-    "                supported accelerators are kvm, xen, hvf, nvmm, whpx or tcg (default: tcg)\n"
+    "                supported accelerators are kvm, xen, hvf, nvmm, whpx, mshv or tcg (default: tcg)\n"
     "                vmport=on|off|auto controls emulation of vmport (default: auto)\n"
     "                dump-guest-core=on|off include guest memory in a core dump (default=on)\n"
     "                mem-merge=on|off controls memory merge support (default: on)\n"
@@ -38,11 +38,13 @@ DEF("machine", HAS_ARG, QEMU_OPTION_machine, \
     "                nvdimm=on|off controls NVDIMM support (default=off)\n"
     "                memory-encryption=@var{} memory encryption object to use (default=none)\n"
     "                hmat=on|off controls ACPI HMAT support (default=off)\n"
+    "                spcr=on|off controls ACPI SPCR support (default=on)\n"
 #ifdef CONFIG_POSIX
     "                aux-ram-share=on|off allocate auxiliary guest RAM as shared (default: off)\n"
 #endif
     "                memory-backend='backend-id' specifies explicitly provided backend for main RAM (default=none)\n"
-    "                cxl-fmw.0.targets.0=firsttarget,cxl-fmw.0.targets.1=secondtarget,cxl-fmw.0.size=size[,cxl-fmw.0.interleave-granularity=granularity]\n",
+    "                cxl-fmw.0.targets.0=firsttarget,cxl-fmw.0.targets.1=secondtarget,cxl-fmw.0.size=size[,cxl-fmw.0.interleave-granularity=granularity]\n"
+    "                smp-cache.0.cache=cachename,smp-cache.0.topology=topologylevel\n",
     QEMU_ARCH_ALL)
 SRST
 ``-machine [type=]name[,prop=value[,...]]``
@@ -64,10 +66,10 @@ SRST
 
     ``accel=accels1[:accels2[:...]]``
         This is used to enable an accelerator. Depending on the target
-        architecture, kvm, xen, hvf, nvmm, whpx or tcg can be available.
-        By default, tcg is used. If there is more than one accelerator
-        specified, the next one is used if the previous one fails to
-        initialize.
+        architecture, kvm, xen, hvf, nvmm, whpx, mshv or tcg can be
+        available. By default, tcg is used. If there is more than one
+        accelerator specified, the next one is used if the previous one
+        fails to initialize.
 
     ``vmport=on|off|auto``
         Enables emulation of VMWare IO port, for vmmouse etc. auto says
@@ -103,6 +105,10 @@ SRST
     ``hmat=on|off``
         Enables or disables ACPI Heterogeneous Memory Attribute Table
         (HMAT) support. The default is off.
+
+    ``spcr=on|off``
+        Enables or disables ACPI Serial Port Console Redirection Table
+        (SPCR) support. The default is on.
 
     ``aux-ram-share=on|off``
         Allocate auxiliary guest RAM as an anonymous file that is
@@ -172,6 +178,33 @@ SRST
         ::
 
             -machine cxl-fmw.0.targets.0=cxl.0,cxl-fmw.0.targets.1=cxl.1,cxl-fmw.0.size=128G,cxl-fmw.0.interleave-granularity=512
+
+    ``smp-cache.0.cache=cachename,smp-cache.0.topology=topologylevel``
+        Define cache properties for SMP system.
+
+        ``cache=cachename`` specifies the cache that the properties will be
+        applied on. This field is the combination of cache level and cache
+        type. It supports ``l1d`` (L1 data cache), ``l1i`` (L1 instruction
+        cache), ``l2`` (L2 unified cache) and ``l3`` (L3 unified cache).
+
+        ``topology=topologylevel`` sets the cache topology level. It accepts
+        CPU topology levels including ``core``, ``module``, ``cluster``, ``die``,
+        ``socket``, ``book``, ``drawer`` and a special value ``default``. If
+        ``default`` is set, then the cache topology will follow the architecture's
+        default cache topology model. If another topology level is set, the cache
+        will be shared at corresponding CPU topology level. For example,
+        ``topology=core`` makes the cache shared by all threads within a core.
+        The omitting cache will default to using the ``default`` level.
+
+        The default cache topology model for an i386 PC machine is as follows:
+        ``l1d``, ``l1i``, and ``l2`` caches are per ``core``, while the ``l3``
+        cache is per ``die``.
+
+        Example:
+
+        ::
+
+            -machine smp-cache.0.cache=l1d,smp-cache.0.topology=core,smp-cache.1.cache=l1i,smp-cache.1.topology=core
 ERST
 
 DEF("M", HAS_ARG, QEMU_OPTION_M,
@@ -193,7 +226,7 @@ ERST
 
 DEF("accel", HAS_ARG, QEMU_OPTION_accel,
     "-accel [accel=]accelerator[,prop[=value][,...]]\n"
-    "                select accelerator (kvm, xen, hvf, nvmm, whpx or tcg; use 'help' for a list)\n"
+    "                select accelerator (kvm, xen, hvf, nvmm, whpx, mshv or tcg; use 'help' for a list)\n"
     "                igd-passthru=on|off (enable Xen integrated Intel graphics passthrough, default=off)\n"
     "                kernel-irqchip=on|off|split controls accelerated irqchip support (default=on)\n"
     "                kvm-shadow-mem=size of KVM shadow MMU in bytes\n"
@@ -208,8 +241,8 @@ DEF("accel", HAS_ARG, QEMU_OPTION_accel,
 SRST
 ``-accel name[,prop=value[,...]]``
     This is used to enable an accelerator. Depending on the target
-    architecture, kvm, xen, hvf, nvmm, whpx or tcg can be available. By
-    default, tcg is used. If there is more than one accelerator
+    architecture, kvm, xen, hvf, nvmm, whpx, mshv or tcg can be available.
+    By default, tcg is used. If there is more than one accelerator
     specified, the next one is used if the previous one fails to
     initialize.
 
@@ -937,7 +970,7 @@ SRST
         Sets the period length in microseconds.
 
     ``in|out.try-poll=on|off``
-        Attempt to use poll mode with the device. Default is on.
+        Attempt to use poll mode with the device. Default is off.
 
     ``threshold=threshold``
         Threshold (in microseconds) when playback starts. Default is 0.
@@ -974,7 +1007,7 @@ SRST
     ``in|out.buffer-count=count``
         Sets the count of the buffers.
 
-    ``in|out.try-poll=on|of``
+    ``in|out.try-poll=on|off``
         Attempt to use poll mode with the device. Default is on.
 
     ``try-mmap=on|off``
@@ -1197,6 +1230,36 @@ SRST
 
     ``aw-bits=val`` (val between 32 and 64, default depends on machine)
         This decides the address width of the IOVA address space.
+
+``-device arm-smmuv3,primary-bus=id``
+    This is only supported by ``-machine virt`` (ARM).
+
+    ``primary-bus=id``
+        Accepts either the default root complex (pcie.0) or a
+        pxb-pcie based root complex.
+
+``-device amd-iommu[,option=...]``
+    Enables emulation of an AMD-Vi I/O Memory Management Unit (IOMMU).
+    Only available with ``-machine q35``, it supports the following options:
+
+    ``dma-remap=on|off`` (default: off)
+        Support for DMA address translation and access permission checking for
+        guests attaching passthrough devices to paging domains, using the AMD v1
+        I/O Page Table format. This enables ``-device vfio-pci,...`` to work
+        correctly with a guest using the DMA remapping feature of the vIOMMU.
+
+    ``intremap=on|off`` (default: auto)
+        Generic x86 IOMMU functionality implemented by ``amd-iommu`` device.
+        Enables interrupt remapping feature in guests, which is also required to
+        enable x2apic support.
+        Currently only available with ``kernel-irqchip=off|split``, it is
+        automatically enabled when either of those modes is in use, and disabled
+        with ``kernel-irqchip=on``.
+
+    ``xtsup=on|off`` (default: off)
+        Interrupt remapping table supports x2apic mode, enabling the use of
+        128-bit IRTE format with 32-bit destination field by the guest. Required
+        to support routing interrupts to vCPUs with APIC IDs larger than 0xff.
 
 ERST
 
@@ -1951,32 +2014,37 @@ SRST
         Specifies the tag name to be used by the guest to mount this
         export point.
 
-    ``multidevs=multidevs``
-        Specifies how to deal with multiple devices being shared with a
-        9p export. Supported behaviours are either "remap", "forbid" or
-        "warn". The latter is the default behaviour on which virtfs 9p
-        expects only one device to be shared with the same export, and
-        if more than one device is shared and accessed via the same 9p
-        export then only a warning message is logged (once) by qemu on
-        host side. In order to avoid file ID collisions on guest you
-        should either create a separate virtfs export for each device to
-        be shared with guests (recommended way) or you might use "remap"
-        instead which allows you to share multiple devices with only one
-        export instead, which is achieved by remapping the original
-        inode numbers from host to guest in a way that would prevent
-        such collisions. Remapping inodes in such use cases is required
+    ``multidevs=remap|forbid|warn``
+        Specifies how to deal with multiple devices being shared with
+        the same 9p export in order to avoid file ID collisions on guest.
+        Supported behaviours are either "remap" (default), "forbid" or
+        "warn".
+
+        ``remap`` : assumes the possibility that more than one device is
+        shared with the same 9p export. Therefore inode numbers from host
+        are remapped for guest in a way that would prevent file ID
+        collisions on guest. Remapping inodes in such cases is required
         because the original device IDs from host are never passed and
         exposed on guest. Instead all files of an export shared with
-        virtfs always share the same device id on guest. So two files
+        virtfs always share the same device ID on guest. So two files
         with identical inode numbers but from actually different devices
         on host would otherwise cause a file ID collision and hence
-        potential misbehaviours on guest. "forbid" on the other hand
-        assumes like "warn" that only one device is shared by the same
-        export, however it will not only log a warning message but also
-        deny access to additional devices on guest. Note though that
-        "forbid" does currently not block all possible file access
-        operations (e.g. readdir() would still return entries from other
-        devices).
+        potential severe misbehaviours on guest.
+
+        ``warn`` : virtfs 9p expects only one device to be shared with
+        the same export. If however more than one device is shared and
+        accessed via the same 9p export then only a warning message is
+        logged (once) by qemu on host side. No further action is performed
+        in this case that would prevent file ID collisions on guest. This
+        could thus lead to severe misbehaviours in this case like wrong
+        files being accessed and data corruption on the exported tree.
+
+        ``forbid`` : assumes like "warn" that only one device is shared
+        by the same 9p export, however it will not only log a warning
+        message but also deny access to additional devices on guest. Note
+        though that "forbid" does currently not block all possible file
+        access operations (e.g. readdir() would still return entries from
+        other devices).
 ERST
 
 DEF("iscsi", HAS_ARG, QEMU_OPTION_iscsi,
@@ -2248,6 +2316,8 @@ DEF("spice", HAS_ARG, QEMU_OPTION_spice,
     "       [,streaming-video=[off|all|filter]][,disable-copy-paste=on|off]\n"
     "       [,disable-agent-file-xfer=on|off][,agent-mouse=[on|off]]\n"
     "       [,playback-compression=[on|off]][,seamless-migration=[on|off]]\n"
+    "       [,video-codec=<codec>\n"
+    "       [,max-refresh-rate=rate\n"
     "       [,gl=[on|off]][,rendernode=<file>]\n"
     "                enable spice\n"
     "                at least one of {port, tls-port} is mandatory\n",
@@ -2335,6 +2405,17 @@ SRST
 
     ``seamless-migration=[on|off]``
         Enable/disable spice seamless migration. Default is off.
+
+    ``video-codec=<codec>``
+        Provide the preferred codec the Spice server should use with the
+        Gstreamer encoder. This option is only relevant when gl=on is
+        specified. If no codec is provided, then the codec gstreamer:h264
+        would be used as default. And, for the case where gl=off, the
+        default codec to be used is determined by the Spice server.
+
+    ``max-refresh-rate=rate``
+        Provide the maximum refresh rate (or FPS) at which the encoding
+        requests should be sent to the Spice server. Default would be 30.
 
     ``gl=[on|off]``
         Enable/disable OpenGL context. Default is off.
@@ -2642,7 +2723,7 @@ DEF("smbios", HAS_ARG, QEMU_OPTION_smbios,
     "-smbios file=binary\n"
     "                load SMBIOS entry from binary file\n"
     "-smbios type=0[,vendor=str][,version=str][,date=str][,release=%d.%d]\n"
-    "              [,uefi=on|off]\n"
+    "              [,uefi=on|off][,vm=on|off]\n"
     "                specify SMBIOS type 0 fields\n"
     "-smbios type=1[,manufacturer=str][,product=str][,version=str][,serial=str]\n"
     "              [,uuid=uuid][,sku=str][,family=str]\n"
@@ -2763,6 +2844,26 @@ DEFHEADING()
 DEFHEADING(Network options:)
 
 DEF("netdev", HAS_ARG, QEMU_OPTION_netdev,
+#ifdef CONFIG_PASST
+    "-netdev passt,id=str[,path=file][,quiet=on|off][,vhost-user=on|off]\n"
+    "[,mtu=mtu][,address=addr][,netmask=mask][,mac=addr][,gateway=addr]\n"
+    "          [,interface=name][,outbound=address][,outbound-if4=name]\n"
+    "          [,outbound-if6=name][,dns=addr][,search=list][,fqdn=name]\n"
+    "          [,dhcp-dns=on|off][,dhcp-search=on|off][,map-host-loopback=addr]\n"
+    "          [,map-guest-addr=addr][,dns-forward=addr][,dns-host=addr]\n"
+    "          [,tcp=on|off][,udp=on|off][,icmp=on|off][,dhcp=on|off]\n"
+    "          [,ndp=on|off][,dhcpv6=on|off][,ra=on|off][,freebind=on|off]\n"
+    "          [,ipv4=on|off][,ipv6=on|off][,tcp-ports=spec][,udp-ports=spec]\n"
+    "          [,param=list]\n"
+    "                configure a passt network backend with ID 'str'\n"
+    "                if 'path' is not provided 'passt' will be started according to PATH\n"
+    "                by default, informational message of passt are not displayed (quiet=on)\n"
+    "                to display this message, use 'quiet=off'\n"
+    "                by default, passt will be started in socket-based mode, to enable vhost-mode,\n"
+    "                use 'vhost-user=on'\n"
+    "                for details on other options, refer to passt(1)\n"
+    "                'param' allows to pass any option defined by passt(1)\n"
+#endif
 #ifdef CONFIG_SLIRP
     "-netdev user,id=str[,ipv4=on|off][,net=addr[/mask]][,host=addr]\n"
     "         [,ipv6=on|off][,ipv6-net=addr[/int]][,ipv6-host=addr]\n"
@@ -2876,6 +2977,7 @@ DEF("netdev", HAS_ARG, QEMU_OPTION_netdev,
 #ifdef CONFIG_AF_XDP
     "-netdev af-xdp,id=str,ifname=name[,mode=native|skb][,force-copy=on|off]\n"
     "         [,queues=n][,start-queue=m][,inhibit=on|off][,sock-fds=x:y:...:z]\n"
+    "         [,map-path=/path/to/socket/map][,map-start-index=i]\n"
     "                attach to the existing network interface 'name' with AF_XDP socket\n"
     "                use 'mode=MODE' to specify an XDP program attach mode\n"
     "                use 'force-copy=on|off' to force XDP copy mode even if device supports zero-copy (default: off)\n"
@@ -2883,6 +2985,8 @@ DEF("netdev", HAS_ARG, QEMU_OPTION_netdev,
     "                with inhibit=on,\n"
     "                  use 'sock-fds' to provide file descriptors for already open AF_XDP sockets\n"
     "                  added to a socket map in XDP program.  One socket per queue.\n"
+    "                  use 'map-path' to provide the socket map location to populate AF_XDP sockets with,\n"
+    "                  and use 'map-start-index' to specify the starting index for the map (default: 0) (Since 10.1)\n"
     "                use 'queues=n' to specify how many queues of a multiqueue interface should be used\n"
     "                use 'start-queue=m' to specify the first queue that should be used\n"
 #endif
@@ -2919,6 +3023,9 @@ DEF("netdev", HAS_ARG, QEMU_OPTION_netdev,
     "                configure a hub port on the hub with ID 'n'\n", QEMU_ARCH_ALL)
 DEF("nic", HAS_ARG, QEMU_OPTION_nic,
     "-nic [tap|bridge|"
+#ifdef CONFIG_PASST
+    "passt|"
+#endif
 #ifdef CONFIG_SLIRP
     "user|"
 #endif
@@ -2951,6 +3058,9 @@ DEF("net", HAS_ARG, QEMU_OPTION_net,
     "                configure or create an on-board (or machine default) NIC and\n"
     "                connect it to hub 0 (please use -nic unless you need a hub)\n"
     "-net ["
+#ifdef CONFIG_PASST
+    "passt|"
+#endif
 #ifdef CONFIG_SLIRP
     "user|"
 #endif
@@ -2972,7 +3082,7 @@ DEF("net", HAS_ARG, QEMU_OPTION_net,
     "                old way to initialize a host network interface\n"
     "                (use the -netdev option if possible instead)\n", QEMU_ARCH_ALL)
 SRST
-``-nic [tap|bridge|user|l2tpv3|vde|netmap|af-xdp|vhost-user|socket][,...][,mac=macaddr][,model=mn]``
+``-nic [tap|passt|bridge|user|l2tpv3|vde|netmap|af-xdp|vhost-user|socket][,...][,mac=macaddr][,model=mn]``
     This option is a shortcut for configuring both the on-board
     (default) guest NIC hardware and the host network backend in one go.
     The host backend options are the same as with the corresponding
@@ -2993,6 +3103,129 @@ SRST
     override the default configuration (default NIC with "user" host
     network backend) which is activated if no other networking options
     are provided.
+
+``-netdev passt,id=str[,option][,...]``
+    Configure a passt network backend which requires no administrator
+    privilege to run. Valid options are:
+
+    ``id=id``
+        Assign symbolic name for use in monitor commands.
+
+    ``path=file``
+        Filename of the passt program to run. If it is not provided,
+        passt command will be started with the help of the PATH environment
+        variable.
+
+    ``quiet=on|off``
+        By default, ``quiet=on`` to disable informational message from
+        passt. ``quiet=on`` is passed as ``--quiet`` to passt.
+
+    ``vhost-user=on|off``
+        By default, ``vhost-user=off`` and QEMU uses the stream network
+        backend to communicate with passt. If ``vhost-user=on``, passt is
+        started with ``--vhost-user`` and QEMU uses the vhost-user network
+        backend to communicate with passt.
+
+    ``@mtu``
+        Assign MTU via DHCP/NDP
+
+    ``address``
+        IPv4 or IPv6 address
+
+    ``netmask``
+        IPv4 mask
+
+    ``mac``
+        source MAC address
+
+    ``gateway``
+        IPv4 or IPv6 address as gateway
+
+    ``interface``
+        Interface for addresses and routes
+
+    ``outbound``
+        Bind to address as outbound source
+
+    ``outbound-if4``
+        Bind to outbound interface for IPv4
+
+    ``outbound-if6``
+        Bind to outbound interface for IPv6
+
+    ``dns``
+        IPv4 or IPv6 address as DNS
+
+    ``search``
+        Search domains
+
+    ``fqdn``
+        FQDN to configure client with
+
+    ``dhcp-dns``
+        Enable/disable DNS list in DHCP/DHCPv6/NDP
+
+    ``dhcp-search``
+        Enable/disable list in DHCP/DHCPv6/NDP
+
+    ``map-host-loopback``
+        Addresse to refer to host
+
+    ``map-guest-addr``
+        Addr to translate to guest's address
+
+    ``dns-forward``
+        Forward DNS queries sent to
+
+    ``dns-host``
+        Host nameserver to direct queries to
+
+    ``tcp``
+        Enable/disable TCP
+
+    ``udp``
+        Enable/disable UDP
+
+    ``icmp``
+        Enable/disable ICMP
+
+    ``dhcp``
+        Enable/disable DHCP
+
+    ``ndp``
+        Enable/disable NDP
+
+    ``dhcpv6``
+        Enable/disable DHCPv6
+
+    ``ra``
+        Enable/disable route advertisements
+
+    ``freebind``
+        Bind to any address for forwarding
+
+    ``ipv4``
+        Enable/disable IPv4
+
+    ``ipv6``
+        Enable/disable IPv6
+
+    ``tcp-ports``
+        TCP ports to forward
+
+    ``udp-ports``
+        UDP ports to forward
+
+    ``param=string``
+         ``string`` will be passed to passt has a command line parameter,
+         we can have multiple occurences of the ``param`` parameter to
+         pass multiple parameters to passt.
+
+         For instance, to pass ``--trace --log=trace.log``:
+
+    .. parsed-literal::
+
+        |qemu_system| -nic passt,param=--trace,param=--log=trace.log
 
 ``-netdev user,id=id[,option][,option][,...]``
     Configure user mode host network backend which requires no
@@ -3114,8 +3347,8 @@ SRST
 
         Note that a SAMBA server must be installed on the host OS.
 
-    ``hostfwd=[tcp|udp]:[hostaddr]:hostport-[guestaddr]:guestport``
-        Redirect incoming TCP or UDP connections to the host port
+    ``hostfwd=[tcp|udp|unix]:[[hostaddr]:hostport|hostpath]-[guestaddr]:guestport``
+        Redirect incoming TCP, UDP or UNIX connections to the host port
         hostport to the guest IP address guestaddr on guest port
         guestport. If guestaddr is not specified, its value is x.x.x.15
         (default first address given by the built-in DHCP server). By
@@ -3144,6 +3377,13 @@ SRST
 
         Then when you use on the host ``telnet localhost 5555``, you
         connect to the guest telnet server.
+
+        To redirect host unix socket /tmp/vm to guest tcp socket 23 use
+        following:
+
+        .. parsed-literal::
+            # on the host
+            |qemu_system| -nic user,hostfwd=unix:/tmp/vm-:23
 
     ``guestfwd=[tcp]:server:port-dev``; \ ``guestfwd=[tcp]:server:port-cmd:command``
         Forward guest TCP connections to the IP address server on port
@@ -3577,7 +3817,7 @@ SRST
         # launch QEMU instance
         |qemu_system| linux.img -nic vde,sock=/tmp/myswitch
 
-``-netdev af-xdp,id=str,ifname=name[,mode=native|skb][,force-copy=on|off][,queues=n][,start-queue=m][,inhibit=on|off][,sock-fds=x:y:...:z]``
+``-netdev af-xdp,id=str,ifname=name[,mode=native|skb][,force-copy=on|off][,queues=n][,start-queue=m][,inhibit=on|off][,sock-fds=x:y:...:z][,map-path=/path/to/socket/map][,map-start-index=i]``
     Configure AF_XDP backend to connect to a network interface 'name'
     using AF_XDP socket.  A specific program attach mode for a default
     XDP program can be forced with 'mode', defaults to best-effort,
@@ -3617,7 +3857,8 @@ SRST
             -netdev af-xdp,id=n1,ifname=eth0,queues=1,start-queue=1
 
     XDP program can also be loaded externally.  In this case 'inhibit' option
-    should be set to 'on' and 'sock-fds' provided with file descriptors for
+    should be set to 'on'.  Either 'sock-fds' or 'map-path' can be used with
+    'inhibit' enabled.  'sock-fds' can be provided with file descriptors for
     already open but not bound XDP sockets already added to a socket map for
     corresponding queues.  One socket per queue.
 
@@ -3625,6 +3866,21 @@ SRST
 
         |qemu_system| linux.img -device virtio-net-pci,netdev=n1 \\
             -netdev af-xdp,id=n1,ifname=eth0,queues=3,inhibit=on,sock-fds=15:16:17
+
+    For the 'inhibit' option set to 'on' used together with 'map-path' it is
+    expected that the XDP program with the socket map is already loaded on
+    the networking device and the map pinned into BPF file system.  The path
+    to the pinned map is then passed to QEMU which then creates the file
+    descriptors and inserts them into the existing socket map.
+
+    .. parsed-literal::
+
+        |qemu_system| linux.img -device virtio-net-pci,netdev=n1 \\
+            -netdev af-xdp,id=n1,ifname=eth0,queues=2,inhibit=on,map-path=/sys/fs/bpf/xsks_map
+
+    Additionally, 'map-start-index' can be used to specify the start offset
+    for insertion into the socket map.  The combination of 'map-path' and
+    'sock-fds' together is not supported.
 
 ``-netdev vhost-user,chardev=id[,vhostforce=on|off][,queues=n]``
     Establish a vhost-user netdev, backed by a chardev id. The chardev
@@ -3678,7 +3934,7 @@ SRST
     Use ``-net nic,model=help`` for a list of available devices for your
     target.
 
-``-net user|tap|bridge|socket|l2tpv3|vde[,...][,name=name]``
+``-net user|passt|tap|bridge|socket|l2tpv3|vde[,...][,name=name]``
     Configure a host network backend (with the options corresponding to
     the same ``-netdev`` option) and connect it to the emulated hub 0
     (the default hub). Use name to specify the name of the hub port.
@@ -4627,21 +4883,25 @@ SRST
 ERST
 
 DEF("overcommit", HAS_ARG, QEMU_OPTION_overcommit,
-    "-overcommit [mem-lock=on|off][cpu-pm=on|off]\n"
+    "-overcommit [mem-lock=on|off|on-fault][cpu-pm=on|off]\n"
     "                run qemu with overcommit hints\n"
-    "                mem-lock=on|off controls memory lock support (default: off)\n"
+    "                mem-lock=on|off|on-fault controls memory lock support (default: off)\n"
     "                cpu-pm=on|off controls cpu power management (default: off)\n",
     QEMU_ARCH_ALL)
 SRST
-``-overcommit mem-lock=on|off``
+``-overcommit mem-lock=on|off|on-fault``
   \ 
 ``-overcommit cpu-pm=on|off``
     Run qemu with hints about host resource overcommit. The default is
     to assume that host overcommits all resources.
 
     Locking qemu and guest memory can be enabled via ``mem-lock=on``
-    (disabled by default). This works when host memory is not
-    overcommitted and reduces the worst-case latency for guest.
+    or ``mem-lock=on-fault`` (disabled by default). This works when
+    host memory is not overcommitted and reduces the worst-case latency for
+    guest. The on-fault option is better for reducing the memory footprint
+    since it makes allocations lazy, but the pages still get locked in place
+    once faulted by the guest or QEMU. Note that the two options are mutually
+    exclusive.
 
     Guest ability to manage power state of host cpus (increasing latency
     for other processes on the same host cpu, but decreasing latency for
@@ -4825,7 +5085,7 @@ SRST
     Start right away with a saved state (``loadvm`` in monitor)
 ERST
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(EMSCRIPTEN)
 DEF("daemonize", 0, QEMU_OPTION_daemonize, \
     "-daemonize      daemonize QEMU after initializing\n", QEMU_ARCH_ALL)
 #endif
@@ -4899,13 +5159,13 @@ SRST
     with actual performance.
 
     When the virtual cpu is sleeping, the virtual time will advance at
-    default speed unless ``sleep=on`` is specified. With
-    ``sleep=on``, the virtual time will jump to the next timer
+    default speed unless ``sleep=off`` is specified. With
+    ``sleep=off``, the virtual time will jump to the next timer
     deadline instantly whenever the virtual cpu goes to sleep mode and
     will not advance if no timer is enabled. This behavior gives
     deterministic execution times from the guest point of view.
-    The default if icount is enabled is ``sleep=off``.
-    ``sleep=on`` cannot be used together with either ``shift=auto``
+    The default if icount is enabled is ``sleep=on``.
+    ``sleep=off`` cannot be used together with either ``shift=auto``
     or ``align=on``.
 
     ``align=on`` will activate the delay algorithm which will try to
@@ -5124,13 +5384,6 @@ SRST
         specified, the former is passed to semihosting as it always
         takes precedence.
 ERST
-DEF("old-param", 0, QEMU_OPTION_old_param,
-    "-old-param      old param mode\n", QEMU_ARCH_ARM)
-SRST
-``-old-param``
-    Old param mode (ARM only).
-ERST
-
 DEF("sandbox", HAS_ARG, QEMU_OPTION_sandbox, \
     "-sandbox on[,obsolete=allow|deny][,elevateprivileges=allow|deny|children]\n" \
     "          [,spawn=allow|deny][,resourcecontrol=allow|deny]\n" \
@@ -5212,17 +5465,20 @@ HXCOMM Internal use
 DEF("qtest", HAS_ARG, QEMU_OPTION_qtest, "", QEMU_ARCH_ALL)
 DEF("qtest-log", HAS_ARG, QEMU_OPTION_qtest_log, "", QEMU_ARCH_ALL)
 
-#ifdef CONFIG_POSIX
+#if defined(CONFIG_POSIX) && !defined(EMSCRIPTEN)
 DEF("run-with", HAS_ARG, QEMU_OPTION_run_with,
-    "-run-with [async-teardown=on|off][,chroot=dir][user=username|uid:gid]\n"
+    "-run-with [async-teardown=on|off][,chroot=dir]\n" \
+    "          [,exit-with-parent=on|off][,user=username|uid:gid]\n"
     "                Set miscellaneous QEMU process lifecycle options:\n"
     "                async-teardown=on enables asynchronous teardown (Linux only)\n"
+    "                exit-with-parent=on causes QEMU to exit if the parent\n"
+    "                  process of QEMU exits (Linux, FreeBSD, macOS only)\n"
     "                chroot=dir chroot to dir just before starting the VM\n"
     "                user=username switch to the specified user before starting the VM\n"
     "                user=uid:gid ditto, but use specified user-ID and group-ID instead\n",
     QEMU_ARCH_ALL)
 SRST
-``-run-with [async-teardown=on|off][,chroot=dir][user=username|uid:gid]``
+``-run-with [async-teardown=on|off][,chroot=dir][,exit-with-parent=on|off][,user=username|uid:gid]``
     Set QEMU process lifecycle options.
 
     ``async-teardown=on`` enables asynchronous teardown. A new process called
@@ -5239,6 +5495,12 @@ SRST
     ``chroot=dir`` can be used for doing a chroot to the specified directory
     immediately before starting the guest execution. This is especially useful
     in combination with ``user=...``.
+
+    ``exit-with-parent=on`` causes QEMU to exit if the parent process of
+    QEMU exits.  This can be used when QEMU runs a captive appliance,
+    where the lifetime of the appliance is scoped to the parent process.
+    In case the parent process crashes, QEMU is still cleaned up.
+    This only works on Linux, FreeBSD and macOS platforms.
 
     ``user=username`` or ``user=uid:gid`` can be used to drop root privileges
     before starting guest execution. QEMU will use the ``setuid`` and ``setgid``
@@ -5953,6 +6215,34 @@ SRST
                  ...... \\
                  -object sev-guest,id=sev0,cbitpos=47,reduced-phys-bits=1 \\
                  -machine ...,memory-encryption=sev0 \\
+                 .....
+
+    ``-object igvm-cfg,file=file``
+        Create an IGVM configuration object that defines the initial state
+        of the guest using a file in that conforms to the Independent Guest
+        Virtual Machine (IGVM) file format.
+
+        This is currently only supported by ``-machine q35`` and
+        ``-machine pc``.
+
+        The ``file`` parameter is used to specify the IGVM file to load.
+        When provided, the IGVM file is used to populate the initial
+        memory of the virtual machine and, depending on the platform, can
+        define the initial processor state, memory map and parameters.
+
+        The IGVM file is expected to contain the firmware for the virtual
+        machine, therefore an ``igvm-cfg`` object cannot be provided along
+        with other ways of specifying firmware, such as the ``-bios``
+        parameter on x86 machines.
+
+        e.g to launch a machine providing the firmware in an IGVM file
+
+        .. parsed-literal::
+
+             # |qemu_system_x86| \\
+                 ...... \\
+                 -object igvm-cfg,id=igvm0,file=bios.igvm \\
+                 -machine ...,igvm-cfg=igvm0 \\
                  .....
 
     ``-object authz-simple,id=id,identity=string``

@@ -39,6 +39,23 @@
 #include "system/tcg.h"
 #include "hw/core/sysemu-cpu-ops.h"
 
+bool s390_cpu_has_work(CPUState *cs)
+{
+    S390CPU *cpu = S390_CPU(cs);
+
+    /* STOPPED cpus can never wake up */
+    if (s390_cpu_get_state(cpu) != S390_CPU_STATE_LOAD &&
+        s390_cpu_get_state(cpu) != S390_CPU_STATE_OPERATING) {
+        return false;
+    }
+
+    if (!cpu_test_interrupt(cs, CPU_INTERRUPT_HARD)) {
+        return false;
+    }
+
+    return s390_cpu_has_int(cpu);
+}
+
 /* S390CPUClass::load_normal() */
 static void s390_cpu_load_normal(CPUState *s)
 {
@@ -158,6 +175,7 @@ void s390_cpu_finalize(Object *obj)
 }
 
 static const struct SysemuCPUOps s390_sysemu_ops = {
+    .has_work = s390_cpu_has_work,
     .get_phys_page_debug = s390_cpu_get_phys_page_debug,
     .get_crash_info = s390_cpu_get_crash_info,
     .write_elf64_note = s390_cpu_write_elf64_note,
@@ -178,7 +196,7 @@ static bool disabled_wait(CPUState *cpu)
                             (PSW_MASK_IO | PSW_MASK_EXT | PSW_MASK_MCHECK));
 }
 
-static unsigned s390_count_running_cpus(void)
+unsigned s390_count_running_cpus(void)
 {
     CPUState *cpu;
     int nr_running = 0;
@@ -196,7 +214,7 @@ static unsigned s390_count_running_cpus(void)
     return nr_running;
 }
 
-unsigned int s390_cpu_halt(S390CPU *cpu)
+void s390_cpu_halt(S390CPU *cpu)
 {
     CPUState *cs = CPU(cpu);
     trace_cpu_halt(cs->cpu_index);
@@ -205,8 +223,6 @@ unsigned int s390_cpu_halt(S390CPU *cpu)
         cs->halted = 1;
         cs->exception_index = EXCP_HLT;
     }
-
-    return s390_count_running_cpus();
 }
 
 void s390_cpu_unhalt(S390CPU *cpu)

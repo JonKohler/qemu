@@ -11,7 +11,7 @@
 #include "qemu/guest-random.h"
 #include "qapi/error.h"
 #include "cpu.h"
-#include "exec/address-spaces.h"
+#include "system/address-spaces.h"
 #include "hw/irq.h"
 #include "hw/boards.h"
 #include "hw/char/serial-mm.h"
@@ -487,8 +487,6 @@ static void openrisc_virt_init(MachineState *machine)
             exit(1);
         }
 
-        cpu_openrisc_clock_init(cpus[n]);
-
         qemu_register_reset(main_cpu_reset, cpus[n]);
     }
 
@@ -540,12 +538,12 @@ static void openrisc_virt_init(MachineState *machine)
                                              machine->initrd_filename,
                                              load_addr, machine->ram_size);
         }
-        boot_info.fdt_addr = openrisc_load_fdt(state->fdt, load_addr,
+        boot_info.fdt_addr = openrisc_load_fdt(machine, state->fdt, load_addr,
                                                machine->ram_size);
     }
 }
 
-static void openrisc_virt_machine_init(ObjectClass *oc, void *data)
+static void openrisc_virt_machine_init(ObjectClass *oc, const void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
 

@@ -35,7 +35,7 @@
 #include "system/replay.h"
 #include "system/runstate.h"
 #include "hw/core/cpu.h"
-#include "system/cpu-timers.h"
+#include "exec/icount.h"
 #include "system/cpu-timers-internal.h"
 
 /*
@@ -47,6 +47,8 @@
 static bool icount_sleep = true;
 /* Arbitrarily pick 1MIPS as the minimum allowable speed.  */
 #define MAX_ICOUNT_SHIFT 10
+
+bool icount_align_option;
 
 /* Do not count executed instructions */
 ICountMode use_icount = ICOUNT_DISABLED;

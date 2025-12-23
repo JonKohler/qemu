@@ -18,7 +18,8 @@
 #include "gdbstub/syscalls.h"
 #include "gdbstub/commands.h"
 #include "exec/hwaddr.h"
-#include "exec/tb-flush.h"
+#include "accel/accel-ops.h"
+#include "accel/accel-cpu-ops.h"
 #include "system/cpus.h"
 #include "system/runstate.h"
 #include "system/replay.h"
@@ -33,7 +34,7 @@
 
 /* System emulation specific state */
 typedef struct {
-    CharBackend chr;
+    CharFrontend chr;
     Chardev *mon_chr;
 } GDBSystemState;
 
@@ -171,7 +172,6 @@ static void gdb_vm_state_change(void *opaque, bool running, RunState state)
         } else {
             trace_gdbstub_hit_break();
         }
-        tb_flush(cpu);
         ret = GDB_SIGNAL_TRAP;
         break;
     case RUN_STATE_PAUSED:
@@ -239,7 +239,7 @@ static void gdb_monitor_open(Chardev *chr, ChardevBackend *backend,
     *be_opened = false;
 }
 
-static void char_gdb_class_init(ObjectClass *oc, void *data)
+static void char_gdb_class_init(ObjectClass *oc, const void *data)
 {
     ChardevClass *cc = CHARDEV_CLASS(oc);
 
@@ -452,8 +452,6 @@ static int phy_memory_mode;
 int gdb_target_memory_rw_debug(CPUState *cpu, hwaddr addr,
                                uint8_t *buf, int len, bool is_write)
 {
-    CPUClass *cc;
-
     if (phy_memory_mode) {
         if (is_write) {
             cpu_physical_memory_write(addr, buf, len);
@@ -463,9 +461,8 @@ int gdb_target_memory_rw_debug(CPUState *cpu, hwaddr addr,
         return 0;
     }
 
-    cc = CPU_GET_CLASS(cpu);
-    if (cc->memory_rw_debug) {
-        return cc->memory_rw_debug(cpu, addr, buf, len, is_write);
+    if (cpu->cc->memory_rw_debug) {
+        return cpu->cc->memory_rw_debug(cpu, addr, buf, len, is_write);
     }
 
     return cpu_memory_rw_debug(cpu, addr, buf, len, is_write);

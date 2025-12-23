@@ -220,8 +220,6 @@ static void npcm7xx_gpio_regs_write(void *opaque, hwaddr addr, uint64_t v,
         return;
     }
 
-    diff = s->regs[reg] ^ value;
-
     switch (reg) {
     case NPCM7XX_GPIO_TLOCK1:
     case NPCM7XX_GPIO_TLOCK2:
@@ -242,6 +240,7 @@ static void npcm7xx_gpio_regs_write(void *opaque, hwaddr addr, uint64_t v,
     case NPCM7XX_GPIO_PU:
     case NPCM7XX_GPIO_PD:
     case NPCM7XX_GPIO_IEM:
+        diff = s->regs[reg] ^ value;
         s->regs[reg] = value;
         npcm7xx_gpio_update_pins(s, diff);
         break;
@@ -397,7 +396,7 @@ static const Property npcm7xx_gpio_properties[] = {
     DEFINE_PROP_UINT32("reset-odsc", NPCM7xxGPIOState, reset_odsc, 0),
 };
 
-static void npcm7xx_gpio_class_init(ObjectClass *klass, void *data)
+static void npcm7xx_gpio_class_init(ObjectClass *klass, const void *data)
 {
     ResettableClass *reset = RESETTABLE_CLASS(klass);
     DeviceClass *dc = DEVICE_CLASS(klass);

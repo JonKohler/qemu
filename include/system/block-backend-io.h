@@ -32,6 +32,13 @@ void blk_set_allow_aio_context_change(BlockBackend *blk, bool allow);
 void blk_set_disable_request_queuing(BlockBackend *blk, bool disable);
 bool blk_iostatus_is_enabled(const BlockBackend *blk);
 
+/*
+ * Return the qdev ID, or if no ID is assigned the QOM path,
+ * of the block device attached to the BlockBackend.
+ *
+ * The caller is responsible for releasing the value returned
+ * with g_free() after use.
+ */
 char *blk_get_attached_dev_id(BlockBackend *blk);
 
 BlockAIOCB *blk_aio_pwrite_zeroes(BlockBackend *blk, int64_t offset,
@@ -109,6 +116,7 @@ BlockAIOCB *blk_abort_aio_request(BlockBackend *blk,
                                   void *opaque, int ret);
 
 uint32_t blk_get_request_alignment(BlockBackend *blk);
+uint32_t blk_get_pwrite_zeroes_alignment(BlockBackend *blk);
 uint32_t blk_get_max_transfer(BlockBackend *blk);
 uint64_t blk_get_max_hw_transfer(BlockBackend *blk);
 

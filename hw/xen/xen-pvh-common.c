@@ -8,14 +8,13 @@
 
 #include "qemu/osdep.h"
 #include "qemu/error-report.h"
-#include "qapi/error.h"
+#include "qemu/units.h"
 #include "qapi/visitor.h"
 #include "hw/boards.h"
 #include "hw/irq.h"
-#include "hw/sysbus.h"
-#include "system/system.h"
 #include "system/tpm.h"
 #include "system/tpm_backend.h"
+#include "system/runstate.h"
 #include "hw/xen/xen-pvh-common.h"
 #include "trace.h"
 
@@ -370,7 +369,7 @@ do {                                                                      \
 #endif
 }
 
-static void xen_pvh_class_init(ObjectClass *oc, void *data)
+static void xen_pvh_class_init(ObjectClass *oc, const void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
 

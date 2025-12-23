@@ -27,8 +27,8 @@
 #include "hw/qdev-core.h"
 #include "monitor-internal.h"
 #include "monitor/hmp.h"
-#include "qapi/qmp/qdict.h"
-#include "qapi/qmp/qnum.h"
+#include "qobject/qdict.h"
+#include "qobject/qnum.h"
 #include "qemu/config-file.h"
 #include "qemu/ctype.h"
 #include "qemu/cutils.h"
@@ -577,10 +577,11 @@ static const char *get_command_name(const char *cmdline,
  * Read key of 'type' into 'key' and return the current
  * 'type' pointer.
  */
-static char *key_get_info(const char *type, char **key)
+static const char *key_get_info(const char *type, char **key)
 {
     size_t len;
-    char *p, *str;
+    const char *p;
+    char *str;
 
     if (*type == ',') {
         type++;

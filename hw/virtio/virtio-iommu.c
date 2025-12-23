@@ -1504,11 +1504,11 @@ static void virtio_iommu_device_unrealize(DeviceState *dev)
     virtio_cleanup(vdev);
 }
 
-static void virtio_iommu_device_reset(VirtIODevice *vdev)
+static void virtio_iommu_device_reset_exit(Object *obj, ResetType type)
 {
-    VirtIOIOMMU *s = VIRTIO_IOMMU(vdev);
+    VirtIOIOMMU *s = VIRTIO_IOMMU(obj);
 
-    trace_virtio_iommu_device_reset();
+    trace_virtio_iommu_device_reset_exit();
 
     if (s->domains) {
         g_tree_destroy(s->domains);
@@ -1522,9 +1522,10 @@ static void virtio_iommu_device_reset(VirtIODevice *vdev)
                                    NULL, NULL, virtio_iommu_put_endpoint);
 }
 
-static void virtio_iommu_set_status(VirtIODevice *vdev, uint8_t status)
+static int virtio_iommu_set_status(VirtIODevice *vdev, uint8_t status)
 {
     trace_virtio_iommu_device_status(status);
+    return 0;
 }
 
 static void virtio_iommu_instance_init(Object *obj)
@@ -1664,10 +1665,11 @@ static const Property virtio_iommu_properties[] = {
     DEFINE_PROP_UINT8("aw-bits", VirtIOIOMMU, aw_bits, 64),
 };
 
-static void virtio_iommu_class_init(ObjectClass *klass, void *data)
+static void virtio_iommu_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     VirtioDeviceClass *vdc = VIRTIO_DEVICE_CLASS(klass);
+    ResettableClass *rc = RESETTABLE_CLASS(klass);
 
     device_class_set_props(dc, virtio_iommu_properties);
     dc->vmsd = &vmstate_virtio_iommu;
@@ -1675,7 +1677,12 @@ static void virtio_iommu_class_init(ObjectClass *klass, void *data)
     set_bit(DEVICE_CATEGORY_MISC, dc->categories);
     vdc->realize = virtio_iommu_device_realize;
     vdc->unrealize = virtio_iommu_device_unrealize;
-    vdc->reset = virtio_iommu_device_reset;
+
+    /*
+     * Use 'exit' reset phase to make sure all DMA requests
+     * have been quiesced during 'enter' or 'hold' phase
+     */
+    rc->phases.exit = virtio_iommu_device_reset_exit;
     vdc->get_config = virtio_iommu_get_config;
     vdc->set_config = virtio_iommu_set_config;
     vdc->get_features = virtio_iommu_get_features;
@@ -1684,7 +1691,7 @@ static void virtio_iommu_class_init(ObjectClass *klass, void *data)
 }
 
 static void virtio_iommu_memory_region_class_init(ObjectClass *klass,
-                                                  void *data)
+                                                  const void *data)
 {
     IOMMUMemoryRegionClass *imrc = IOMMU_MEMORY_REGION_CLASS(klass);
 

@@ -28,6 +28,7 @@
 #include "hw/riscv/boot.h"
 #include "qemu/units.h"
 #include "system/system.h"
+#include "system/address-spaces.h"
 
 /*
  * This version of the OpenTitan machine currently supports
@@ -111,7 +112,7 @@ static void opentitan_machine_init(MachineState *machine)
     }
 }
 
-static void opentitan_machine_class_init(ObjectClass *oc, void *data)
+static void opentitan_machine_class_init(ObjectClass *oc, const void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
 
@@ -312,7 +313,7 @@ static const Property lowrisc_ibex_soc_props[] = {
     DEFINE_PROP_UINT32("resetvec", LowRISCIbexSoCState, resetvec, 0x20000400),
 };
 
-static void lowrisc_ibex_soc_class_init(ObjectClass *oc, void *data)
+static void lowrisc_ibex_soc_class_init(ObjectClass *oc, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(oc);
 

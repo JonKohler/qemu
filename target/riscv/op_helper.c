@@ -21,10 +21,26 @@
 #include "qemu/osdep.h"
 #include "cpu.h"
 #include "internals.h"
-#include "exec/exec-all.h"
-#include "exec/cpu_ldst.h"
+#include "exec/cputlb.h"
+#include "accel/tcg/cpu-ldst.h"
+#include "accel/tcg/probe.h"
 #include "exec/helper-proto.h"
+#include "exec/tlb-flags.h"
 #include "trace.h"
+
+#ifndef CONFIG_USER_ONLY
+static inline MemOp mo_endian_env(CPURISCVState *env)
+{
+    /*
+     * A couple of bits in MSTATUS set the endianness:
+     *  - MSTATUS_UBE (User-mode),
+     *  - MSTATUS_SBE (Supervisor-mode),
+     *  - MSTATUS_MBE (Machine-mode)
+     * but we don't implement that yet.
+     */
+    return MO_TE;
+}
+#endif
 
 /* Exceptions processing helpers */
 G_NORETURN void riscv_raise_exception(CPURISCVState *env,
@@ -69,7 +85,7 @@ target_ulong helper_csrr(CPURISCVState *env, int csr)
 void helper_csrw(CPURISCVState *env, int csr, target_ulong src)
 {
     target_ulong mask = env->xl == MXL_RV32 ? UINT32_MAX : (target_ulong)-1;
-    RISCVException ret = riscv_csrrw(env, csr, NULL, src, mask);
+    RISCVException ret = riscv_csrrw(env, csr, NULL, src, mask, GETPC());
 
     if (ret != RISCV_EXCP_NONE) {
         riscv_raise_exception(env, ret, GETPC());
@@ -80,7 +96,7 @@ target_ulong helper_csrrw(CPURISCVState *env, int csr,
                           target_ulong src, target_ulong write_mask)
 {
     target_ulong val = 0;
-    RISCVException ret = riscv_csrrw(env, csr, &val, src, write_mask);
+    RISCVException ret = riscv_csrrw(env, csr, &val, src, write_mask, GETPC());
 
     if (ret != RISCV_EXCP_NONE) {
         riscv_raise_exception(env, ret, GETPC());
@@ -106,7 +122,7 @@ void helper_csrw_i128(CPURISCVState *env, int csr,
 {
     RISCVException ret = riscv_csrrw_i128(env, csr, NULL,
                                           int128_make128(srcl, srch),
-                                          UINT128_MAX);
+                                          UINT128_MAX, GETPC());
 
     if (ret != RISCV_EXCP_NONE) {
         riscv_raise_exception(env, ret, GETPC());
@@ -114,13 +130,14 @@ void helper_csrw_i128(CPURISCVState *env, int csr,
 }
 
 target_ulong helper_csrrw_i128(CPURISCVState *env, int csr,
-                       target_ulong srcl, target_ulong srch,
-                       target_ulong maskl, target_ulong maskh)
+                               target_ulong srcl, target_ulong srch,
+                               target_ulong maskl, target_ulong maskh)
 {
     Int128 rv = int128_zero();
     RISCVException ret = riscv_csrrw_i128(env, csr, &rv,
                                           int128_make128(srcl, srch),
-                                          int128_make128(maskl, maskh));
+                                          int128_make128(maskl, maskh),
+                                          GETPC());
 
     if (ret != RISCV_EXCP_NONE) {
         riscv_raise_exception(env, ret, GETPC());
@@ -270,13 +287,17 @@ target_ulong helper_sret(CPURISCVState *env)
 {
     uint64_t mstatus;
     target_ulong prev_priv, prev_virt = env->virt_enabled;
+    const target_ulong src_priv = env->priv;
+    const bool src_virt = env->virt_enabled;
 
     if (!(env->priv >= PRV_S)) {
         riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, GETPC());
     }
 
-    target_ulong retpc = env->sepc;
-    if (!riscv_has_ext(env, RVC) && (retpc & 0x3)) {
+    target_ulong retpc = env->sepc & get_xepc_mask(env);
+    if (!riscv_cpu_allow_16bit_insn(&env_archcpu(env)->cfg,
+                                    env->priv_ver,
+                                    env->misa_ext) && (retpc & 0x3)) {
         riscv_raise_exception(env, RISCV_EXCP_INST_ADDR_MIS, GETPC());
     }
 
@@ -339,23 +360,31 @@ target_ulong helper_sret(CPURISCVState *env)
     }
     env->mstatus = set_field(env->mstatus, MSTATUS_SPELP, 0);
 
+    if (riscv_cpu_cfg(env)->ext_smctr || riscv_cpu_cfg(env)->ext_ssctr) {
+        riscv_ctr_add_entry(env, env->pc, retpc, CTRDATA_TYPE_EXCEP_INT_RET,
+                            src_priv, src_virt);
+    }
+
     return retpc;
 }
 
 static void check_ret_from_m_mode(CPURISCVState *env, target_ulong retpc,
-                                  target_ulong prev_priv)
+                                  target_ulong prev_priv,
+                                  uintptr_t ra)
 {
     if (!(env->priv >= PRV_M)) {
-        riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, GETPC());
+        riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, ra);
     }
 
-    if (!riscv_has_ext(env, RVC) && (retpc & 0x3)) {
-        riscv_raise_exception(env, RISCV_EXCP_INST_ADDR_MIS, GETPC());
+    if (!riscv_cpu_allow_16bit_insn(&env_archcpu(env)->cfg,
+                                    env->priv_ver,
+                                    env->misa_ext) && (retpc & 0x3)) {
+        riscv_raise_exception(env, RISCV_EXCP_INST_ADDR_MIS, ra);
     }
 
     if (riscv_cpu_cfg(env)->pmp &&
         !pmp_get_num_rules(env) && (prev_priv != PRV_M)) {
-        riscv_raise_exception(env, RISCV_EXCP_INST_ACCESS_FAULT, GETPC());
+        riscv_raise_exception(env, RISCV_EXCP_INST_ACCESS_FAULT, ra);
     }
 }
 static target_ulong ssdbltrp_mxret(CPURISCVState *env, target_ulong mstatus,
@@ -377,11 +406,12 @@ static target_ulong ssdbltrp_mxret(CPURISCVState *env, target_ulong mstatus,
 
 target_ulong helper_mret(CPURISCVState *env)
 {
-    target_ulong retpc = env->mepc;
+    target_ulong retpc = env->mepc & get_xepc_mask(env);
     uint64_t mstatus = env->mstatus;
     target_ulong prev_priv = get_field(mstatus, MSTATUS_MPP);
+    uintptr_t ra = GETPC();
 
-    check_ret_from_m_mode(env, retpc, prev_priv);
+    check_ret_from_m_mode(env, retpc, prev_priv, ra);
 
     target_ulong prev_virt = get_field(env->mstatus, MSTATUS_MPV) &&
                              (prev_priv != PRV_M);
@@ -416,6 +446,11 @@ target_ulong helper_mret(CPURISCVState *env)
     }
     env->mstatus = set_field(env->mstatus, MSTATUS_MPELP, 0);
 
+    if (riscv_cpu_cfg(env)->ext_smctr || riscv_cpu_cfg(env)->ext_ssctr) {
+        riscv_ctr_add_entry(env, env->pc, retpc, CTRDATA_TYPE_EXCEP_INT_RET,
+                            PRV_M, false);
+    }
+
     return retpc;
 }
 
@@ -424,8 +459,9 @@ target_ulong helper_mnret(CPURISCVState *env)
     target_ulong retpc = env->mnepc;
     target_ulong prev_priv = get_field(env->mnstatus, MNSTATUS_MNPP);
     target_ulong prev_virt;
+    uintptr_t ra = GETPC();
 
-    check_ret_from_m_mode(env, retpc, prev_priv);
+    check_ret_from_m_mode(env, retpc, prev_priv, ra);
 
     prev_virt = get_field(env->mnstatus, MNSTATUS_MNPV) &&
                 (prev_priv != PRV_M);
@@ -464,6 +500,42 @@ target_ulong helper_mnret(CPURISCVState *env)
     env->mnstatus = set_field(env->mnstatus, MNSTATUS_MNPELP, 0);
 
     return retpc;
+}
+
+void helper_ctr_add_entry(CPURISCVState *env, target_ulong src,
+                          target_ulong dest, target_ulong type)
+{
+    riscv_ctr_add_entry(env, src, dest, (enum CTRType)type,
+                        env->priv, env->virt_enabled);
+}
+
+void helper_ctr_clear(CPURISCVState *env)
+{
+    /*
+     * It's safe to call smstateen_acc_ok() for umode access regardless of the
+     * state of bit 54 (CTR bit in case of m/hstateen) of sstateen. If the bit
+     * is zero, smstateen_acc_ok() will return the correct exception code and
+     * if it's one, smstateen_acc_ok() will return RISCV_EXCP_NONE. In that
+     * scenario the U-mode check below will handle that case.
+     */
+    RISCVException ret = smstateen_acc_ok(env, 0, SMSTATEEN0_CTR);
+    if (ret != RISCV_EXCP_NONE) {
+        riscv_raise_exception(env, ret, GETPC());
+    }
+
+    if (env->priv == PRV_U) {
+        /*
+         * One corner case is when sctrclr is executed from VU-mode and
+         * mstateen.CTR = 0, in which case we are supposed to raise
+         * RISCV_EXCP_ILLEGAL_INST. This case is already handled in
+         * smstateen_acc_ok().
+         */
+        uint32_t excep = env->virt_enabled ? RISCV_EXCP_VIRT_INSTRUCTION_FAULT :
+            RISCV_EXCP_ILLEGAL_INST;
+        riscv_raise_exception(env, excep, GETPC());
+    }
+
+    riscv_ctr_clear(env);
 }
 
 void helper_wfi(CPURISCVState *env)
@@ -575,7 +647,7 @@ target_ulong helper_hyp_hlv_hu(CPURISCVState *env, target_ulong addr)
 {
     uintptr_t ra = GETPC();
     int mmu_idx = check_access_hlsv(env, false, ra);
-    MemOpIdx oi = make_memop_idx(MO_TEUW, mmu_idx);
+    MemOpIdx oi = make_memop_idx(mo_endian_env(env) | MO_UW, mmu_idx);
 
     return cpu_ldw_mmu(env, adjust_addr_virt(env, addr), oi, ra);
 }
@@ -584,7 +656,7 @@ target_ulong helper_hyp_hlv_wu(CPURISCVState *env, target_ulong addr)
 {
     uintptr_t ra = GETPC();
     int mmu_idx = check_access_hlsv(env, false, ra);
-    MemOpIdx oi = make_memop_idx(MO_TEUL, mmu_idx);
+    MemOpIdx oi = make_memop_idx(mo_endian_env(env) | MO_UL, mmu_idx);
 
     return cpu_ldl_mmu(env, adjust_addr_virt(env, addr), oi, ra);
 }
@@ -593,7 +665,7 @@ target_ulong helper_hyp_hlv_d(CPURISCVState *env, target_ulong addr)
 {
     uintptr_t ra = GETPC();
     int mmu_idx = check_access_hlsv(env, false, ra);
-    MemOpIdx oi = make_memop_idx(MO_TEUQ, mmu_idx);
+    MemOpIdx oi = make_memop_idx(mo_endian_env(env) | MO_UQ, mmu_idx);
 
     return cpu_ldq_mmu(env, adjust_addr_virt(env, addr), oi, ra);
 }
@@ -611,7 +683,7 @@ void helper_hyp_hsv_h(CPURISCVState *env, target_ulong addr, target_ulong val)
 {
     uintptr_t ra = GETPC();
     int mmu_idx = check_access_hlsv(env, false, ra);
-    MemOpIdx oi = make_memop_idx(MO_TEUW, mmu_idx);
+    MemOpIdx oi = make_memop_idx(mo_endian_env(env) | MO_UW, mmu_idx);
 
     cpu_stw_mmu(env, adjust_addr_virt(env, addr), val, oi, ra);
 }
@@ -620,7 +692,7 @@ void helper_hyp_hsv_w(CPURISCVState *env, target_ulong addr, target_ulong val)
 {
     uintptr_t ra = GETPC();
     int mmu_idx = check_access_hlsv(env, false, ra);
-    MemOpIdx oi = make_memop_idx(MO_TEUL, mmu_idx);
+    MemOpIdx oi = make_memop_idx(mo_endian_env(env) | MO_UL, mmu_idx);
 
     cpu_stl_mmu(env, adjust_addr_virt(env, addr), val, oi, ra);
 }
@@ -629,7 +701,7 @@ void helper_hyp_hsv_d(CPURISCVState *env, target_ulong addr, target_ulong val)
 {
     uintptr_t ra = GETPC();
     int mmu_idx = check_access_hlsv(env, false, ra);
-    MemOpIdx oi = make_memop_idx(MO_TEUQ, mmu_idx);
+    MemOpIdx oi = make_memop_idx(mo_endian_env(env) | MO_UQ, mmu_idx);
 
     cpu_stq_mmu(env, adjust_addr_virt(env, addr), val, oi, ra);
 }
@@ -645,7 +717,7 @@ target_ulong helper_hyp_hlvx_hu(CPURISCVState *env, target_ulong addr)
 {
     uintptr_t ra = GETPC();
     int mmu_idx = check_access_hlsv(env, true, ra);
-    MemOpIdx oi = make_memop_idx(MO_TEUW, mmu_idx);
+    MemOpIdx oi = make_memop_idx(mo_endian_env(env) | MO_UW, mmu_idx);
 
     return cpu_ldw_code_mmu(env, addr, oi, GETPC());
 }
@@ -654,9 +726,58 @@ target_ulong helper_hyp_hlvx_wu(CPURISCVState *env, target_ulong addr)
 {
     uintptr_t ra = GETPC();
     int mmu_idx = check_access_hlsv(env, true, ra);
-    MemOpIdx oi = make_memop_idx(MO_TEUL, mmu_idx);
+    MemOpIdx oi = make_memop_idx(mo_endian_env(env) | MO_UL, mmu_idx);
 
     return cpu_ldl_code_mmu(env, addr, oi, ra);
+}
+
+void helper_ssamoswap_disabled(CPURISCVState *env)
+{
+    int exception = RISCV_EXCP_ILLEGAL_INST;
+
+    /*
+     * Here we follow the RISC-V CFI spec [1] to implement the exception type
+     * of ssamoswap* instruction.
+     *
+     * [1] RISC-V CFI spec v1.0, ch2.7 Atomic Swap from a Shadow Stack Location
+     *
+     * Note: We have already checked some conditions in trans_* functions:
+     *   1. The effective priv mode is not M-mode.
+     *   2. The xSSE specific to the effictive priv mode is disabled.
+     */
+    if (!get_field(env->menvcfg, MENVCFG_SSE)) {
+        /*
+         * Disabled M-mode SSE always trigger illegal instruction when
+         * current priv mode is not M-mode.
+         */
+        exception = RISCV_EXCP_ILLEGAL_INST;
+        goto done;
+    }
+
+    if (!riscv_has_ext(env, RVS)) {
+        /* S-mode is not implemented */
+        exception = RISCV_EXCP_ILLEGAL_INST;
+        goto done;
+    } else if (env->virt_enabled) {
+        /*
+         * VU/VS-mode with disabled xSSE will trigger the virtual instruction
+         * exception.
+         */
+        exception = RISCV_EXCP_VIRT_INSTRUCTION_FAULT;
+        goto done;
+    } else {
+        /*
+         * U-mode with disabled S-mode SSE will trigger the illegal instruction
+         * exception.
+         *
+         * Note: S-mode is already handled in the disabled M-mode SSE case.
+         */
+        exception = RISCV_EXCP_ILLEGAL_INST;
+        goto done;
+    }
+
+done:
+    riscv_raise_exception(env, exception, GETPC());
 }
 
 #endif /* !CONFIG_USER_ONLY */

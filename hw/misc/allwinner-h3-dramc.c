@@ -24,7 +24,7 @@
 #include "migration/vmstate.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
-#include "exec/address-spaces.h"
+#include "system/address-spaces.h"
 #include "hw/qdev-properties.h"
 #include "qapi/error.h"
 #include "hw/misc/allwinner-h3-dramc.h"
@@ -219,7 +219,7 @@ static void allwinner_h3_dramphy_write(void *opaque, hwaddr offset,
 static const MemoryRegionOps allwinner_h3_dramcom_ops = {
     .read = allwinner_h3_dramcom_read,
     .write = allwinner_h3_dramcom_write,
-    .endianness = DEVICE_NATIVE_ENDIAN,
+    .endianness = DEVICE_LITTLE_ENDIAN,
     .valid = {
         .min_access_size = 4,
         .max_access_size = 4,
@@ -230,7 +230,7 @@ static const MemoryRegionOps allwinner_h3_dramcom_ops = {
 static const MemoryRegionOps allwinner_h3_dramctl_ops = {
     .read = allwinner_h3_dramctl_read,
     .write = allwinner_h3_dramctl_write,
-    .endianness = DEVICE_NATIVE_ENDIAN,
+    .endianness = DEVICE_LITTLE_ENDIAN,
     .valid = {
         .min_access_size = 4,
         .max_access_size = 4,
@@ -241,7 +241,7 @@ static const MemoryRegionOps allwinner_h3_dramctl_ops = {
 static const MemoryRegionOps allwinner_h3_dramphy_ops = {
     .read = allwinner_h3_dramphy_read,
     .write = allwinner_h3_dramphy_write,
-    .endianness = DEVICE_NATIVE_ENDIAN,
+    .endianness = DEVICE_LITTLE_ENDIAN,
     .valid = {
         .min_access_size = 4,
         .max_access_size = 4,
@@ -331,7 +331,7 @@ static const VMStateDescription allwinner_h3_dramc_vmstate = {
     }
 };
 
-static void allwinner_h3_dramc_class_init(ObjectClass *klass, void *data)
+static void allwinner_h3_dramc_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
 
