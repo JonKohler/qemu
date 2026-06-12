@@ -34,6 +34,7 @@ guest hardware that is specific to QEMU.
    virt-ctlr
    vmcoreinfo
    vmgenid
+   wsmt-system-resource-protection
    rapl-msr
    rocker
    riscv-iommu

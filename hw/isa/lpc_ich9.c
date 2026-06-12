@@ -534,6 +534,8 @@ static void
 ich9_lpc_pmcon_update(ICH9LPCState *lpc)
 {
     uint16_t gen_pmcon_1 = pci_get_word(lpc->d.config + ICH9_LPC_GEN_PMCON_1);
+    uint16_t gen_pmcon_lock =
+        pci_get_word(lpc->d.config + ICH9_LPC_GEN_PMCON_LOCK);
     uint16_t wmask;
 
     if (lpc->pm.swsmi_timer_enabled) {
@@ -550,6 +552,14 @@ ich9_lpc_pmcon_update(ICH9LPCState *lpc)
         wmask &= ~ICH9_LPC_GEN_PMCON_1_SMI_LOCK;
         pci_set_word(lpc->d.wmask + ICH9_LPC_GEN_PMCON_1, wmask);
         lpc->pm.smi_en_wmask &= ~1;
+    }
+
+    if (gen_pmcon_lock & ICH9_LPC_GEN_PMCON_LOCK_ACPI_BASE_LOCK) {
+        pci_set_long(lpc->d.wmask + ICH9_LPC_PMBASE, 0);
+        pci_set_byte(lpc->d.wmask + ICH9_LPC_ACPI_CTRL, 0);
+        wmask = pci_get_word(lpc->d.wmask + ICH9_LPC_GEN_PMCON_LOCK);
+        wmask &= ~ICH9_LPC_GEN_PMCON_LOCK_ACPI_BASE_LOCK;
+        pci_set_word(lpc->d.wmask + ICH9_LPC_GEN_PMCON_LOCK, wmask);
     }
 }
 
@@ -731,9 +741,13 @@ static void ich9_lpc_realize(PCIDevice *d, Error **errp)
 
     pci_set_long(d->wmask + ICH9_LPC_PMBASE,
                  ICH9_LPC_PMBASE_BASE_ADDRESS_MASK);
-    pci_set_byte(d->wmask + ICH9_LPC_PMBASE,
+    pci_set_byte(d->wmask + ICH9_LPC_ACPI_CTRL,
                  ICH9_LPC_ACPI_CTRL_ACPI_EN |
                  ICH9_LPC_ACPI_CTRL_SCI_IRQ_SEL_MASK);
+    pci_set_word(d->wmask + ICH9_LPC_GEN_PMCON_1,
+                 ICH9_LPC_GEN_PMCON_1_SMI_LOCK);
+    pci_set_word(d->wmask + ICH9_LPC_GEN_PMCON_LOCK,
+                 ICH9_LPC_GEN_PMCON_LOCK_ACPI_BASE_LOCK);
 
     memory_region_init_io(&lpc->rcrb_mem, OBJECT(d), &rcrb_mmio_ops, lpc,
                           "lpc-rcrb-mmio", ICH9_CC_SIZE);

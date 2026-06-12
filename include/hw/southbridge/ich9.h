@@ -165,6 +165,7 @@ struct ICH9LPCState {
 #define ICH9_LPC_GEN_PMCON_2                    0xa2
 #define ICH9_LPC_GEN_PMCON_3                    0xa4
 #define ICH9_LPC_GEN_PMCON_LOCK                 0xa6
+#define ICH9_LPC_GEN_PMCON_LOCK_ACPI_BASE_LOCK  (1 << 0)
 
 #define ICH9_LPC_RCBA                           0xf0
 #define ICH9_LPC_RCBA_BA_MASK                   ICH9_MASK(32, 31, 14)
